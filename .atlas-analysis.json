@@ -1,0 +1,138 @@
+{
+  "projectType": "frontend",
+  "projectName": "NASA Explorer",
+  "projectDescription": "Android application for exploring NASA's Astronomy Picture of the Day (APOD) with user authentication and cloud-synced favorites",
+  "theme": "palm",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/daily-image",
+              "features/random-images",
+              "features/date-range",
+              "features/favorites"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/mvvm-pattern",
+              "architecture/dependency-injection",
+              "architecture/navigation"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/nasa-api",
+              "configuration/firebase",
+              "configuration/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Components",
+        "groups": [
+          {
+            "group": "UI Screens",
+            "pages": [
+              "components/login-screen",
+              "components/signup-screen",
+              "components/home-screen",
+              "components/daily-image-screen",
+              "components/random-image-screen",
+              "components/range-images-screen",
+              "components/favorites-screen"
+            ]
+          },
+          {
+            "group": "Data Layer",
+            "pages": [
+              "components/api-service",
+              "components/repository",
+              "components/models"
+            ]
+          },
+          {
+            "group": "ViewModels",
+            "pages": [
+              "components/viewmodels"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Developer Guide",
+            "pages": [
+              "development/requirements",
+              "development/project-structure",
+              "development/testing",
+              "development/building"
+            ]
+          },
+          {
+            "group": "Technologies",
+            "pages": [
+              "technologies/jetpack-compose",
+              "technologies/kotlin",
+              "technologies/hilt",
+              "technologies/retrofit",
+              "technologies/firebase"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Firebase Authentication with email/password",
+    "NASA APOD API integration",
+    "Daily astronomy picture viewer",
+    "Random image discovery",
+    "Date range image search",
+    "Cloud-synced favorites with personal notes",
+    "Jetpack Compose UI with Material Design 3",
+    "MVVM architecture with Hilt dependency injection"
+  ],
+  "publicApiSurface": [
+    "NasaApiService.getImageOfTheDay()",
+    "NasaApiService.getImagesInRange()",
+    "NasaApiService.getRandomImages()",
+    "Routes.Login",
+    "Routes.SignUp",
+    "Routes.Home",
+    "Routes.DailyImage",
+    "Routes.RandomImage",
+    "Routes.RangeImages",
+    "Routes.FavoriteImages",
+    "NasaModel",
+    "FavoriteNasaModel",
+    "DailyImageViewModel",
+    "HomeScreenViewModel",
+    "LoginScreenViewModel",
+    "RandomImageViewModel",
+    "RangeImagesViewModel",
+    "FavoritesViewModel"
+  ]
+}
