@@ -1,0 +1,368 @@
+---
+title: Installation
+description: Complete installation and configuration guide for NASA Explorer
+---
+
+This guide provides detailed installation instructions for NASA Explorer, including all prerequisites, configuration steps, and verification procedures.
+
+## System Requirements
+
+### Development Environment
+
+<CardGroup cols={2}>
+  <Card title="Android Studio" icon="android">
+    **Koala (2024.1.1)** or newer
+  </Card>
+  <Card title="Java Development Kit" icon="java">
+    **JDK 17** or newer
+  </Card>
+  <Card title="Gradle" icon="gear">
+    **8.7** (included with Android Studio)
+  </Card>
+  <Card title="Kotlin" icon="code">
+    **2.0.0** or newer
+  </Card>
+</CardGroup>
+
+### Target Platform
+
+- **Minimum SDK**: Android 8.0 (API 26)
+- **Target SDK**: Android 14 (API 34)
+- **Compile SDK**: API 34
+
+### Hardware Requirements
+
+- **RAM**: 8 GB minimum, 16 GB recommended
+- **Storage**: 4 GB free space for Android Studio and SDKs
+- **Processor**: 64-bit processor required
+
+## Installation Steps
+
+<Steps>
+  <Step title="Install Android Studio">
+    Download and install Android Studio Koala or newer:
+
+    1. Visit [developer.android.com/studio](https://developer.android.com/studio)
+    2. Download the installer for your operating system
+    3. Run the installer and follow the setup wizard
+    4. Install the Android SDK and emulator (if prompted)
+
+    <Note>
+    Make sure to install the **Android SDK Command-line Tools** during setup.
+    </Note>
+  </Step>
+
+  <Step title="Install JDK 17">
+    Verify or install JDK 17:
+
+    Check your Java version:
+    ```bash
+    java -version
+    ```
+
+    If you need to install JDK 17:
+    - **Windows/macOS/Linux**: Download from [Oracle](https://www.oracle.com/java/technologies/downloads/#java17) or [Adoptium](https://adoptium.net/)
+    - **macOS (Homebrew)**: `brew install openjdk@17`
+    - **Linux (apt)**: `sudo apt install openjdk-17-jdk`
+
+    Configure Android Studio to use JDK 17:
+    1. Go to **File** → **Project Structure** → **SDK Location**
+    2. Set the **JDK location** to your JDK 17 installation
+  </Step>
+
+  <Step title="Clone the repository">
+    Clone NASA Explorer from GitHub:
+
+    <CodeGroup>
+    ```bash HTTPS
+    git clone https://github.com/CCandelaDev/NASAExplorer.git
+    cd NASAExplorer
+    ```
+
+    ```bash SSH
+    git clone git@github.com:CCandelaDev/NASAExplorer.git
+    cd NASAExplorer
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Open project in Android Studio">
+    1. Launch **Android Studio**
+    2. Click **File** → **Open** (or **Open an Existing Project** from welcome screen)
+    3. Navigate to the cloned `NASAExplorer` directory
+    4. Click **OK**
+
+    Android Studio will:
+    - Index the project files
+    - Download Gradle dependencies
+    - Configure the Android SDK
+
+    <Info>
+    The initial sync may take 5-10 minutes depending on your internet connection.
+    </Info>
+  </Step>
+
+  <Step title="Configure NASA API credentials">
+    ### Get Your API Key
+
+    1. Visit [https://api.nasa.gov/](https://api.nasa.gov/)
+    2. Fill out the API key request form with:
+       - First Name
+       - Last Name
+       - Email address
+    3. Check your email for the API key (arrives instantly)
+
+    ### Add to Project
+
+    1. Create a file named `local.properties` in the project root directory
+    2. Add your API key:
+
+    ```properties local.properties
+    # NASA API Configuration
+    nasaApiKey=YOUR_NASA_API_KEY_HERE
+    ```
+
+    <Warning>
+    **NEVER** commit `local.properties` to version control. This file is already listed in `.gitignore` to prevent accidental exposure of your API key.
+    </Warning>
+
+    ### Verify Configuration
+
+    The API key is injected into the app via BuildConfig:
+
+    ```kotlin build.gradle.kts
+    // API key is read from local.properties
+    val localProperties = Properties().apply {
+        load(project.rootProject.file("local.properties").inputStream())
+    }
+    val nasaApiKey: String = localProperties.getProperty("nasaApiKey") ?: ""
+
+    android {
+        defaultConfig {
+            // Available as BuildConfig.NASA_API_KEY
+            buildConfigField("String", "NASA_API_KEY", "\"$nasaApiKey\"")
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Configure Firebase">
+    ### Create Firebase Project
+
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click **Add project** or **Create a project**
+    3. Enter project name: `NASA Explorer` (or your preferred name)
+    4. Accept the terms and click **Continue**
+    5. Disable Google Analytics (optional for this app)
+    6. Click **Create project**
+
+    ### Add Android App
+
+    1. In your Firebase project, click the **Android** icon
+    2. Register your app with package name: `com.ccandeladev.nasaexplorer`
+    3. (Optional) Add a nickname: "NASA Explorer Android"
+    4. (Optional) Add SHA-1 signing certificate for production
+    5. Click **Register app**
+
+    ### Download Configuration File
+
+    1. Download `google-services.json` from the Firebase Console
+    2. Place the file in your project at:
+       ```
+       NASAExplorer/app/google-services.json
+       ```
+
+    <Warning>
+    The `google-services.json` file contains your Firebase project configuration. It's excluded from version control via `.gitignore`.
+    </Warning>
+
+    ### Enable Authentication
+
+    1. In Firebase Console, go to **Build** → **Authentication**
+    2. Click **Get started**
+    3. Select **Email/Password** sign-in method
+    4. Enable **Email/Password**
+    5. Click **Save**
+
+    ### Enable Realtime Database
+
+    1. In Firebase Console, go to **Build** → **Realtime Database**
+    2. Click **Create Database**
+    3. Select a location (choose closest to your users)
+    4. Start in **Test mode** for development
+    5. Click **Enable**
+
+    <Warning>
+    Test mode allows read/write access without authentication. Use production rules before deploying:
+
+    ```json
+    {
+      "rules": {
+        "users": {
+          "$uid": {
+            ".read": "$uid === auth.uid",
+            ".write": "$uid === auth.uid"
+          }
+        }
+      }
+    }
+    ```
+    </Warning>
+  </Step>
+
+  <Step title="Sync and build">
+    Sync Gradle and build the project:
+
+    1. In Android Studio, click **File** → **Sync Project with Gradle Files**
+    2. Wait for the sync to complete (check the status in the bottom-right corner)
+    3. Once synced, click **Build** → **Make Project**
+
+    <Tip>
+    If you encounter build errors, try **File** → **Invalidate Caches** → **Invalidate and Restart**.
+    </Tip>
+  </Step>
+
+  <Step title="Run the application">
+    ### Set Up Device/Emulator
+
+    **Option 1: Physical Device**
+    1. Enable Developer Options on your Android device
+    2. Enable USB Debugging
+    3. Connect device via USB
+    4. Accept the debugging authorization prompt
+
+    **Option 2: Android Emulator**
+    1. Click **Tools** → **Device Manager**
+    2. Click **Create Device**
+    3. Select a device (e.g., Pixel 5)
+    4. Select a system image (API 26 or higher)
+    5. Click **Finish**
+
+    ### Launch the App
+
+    1. Select your device from the device dropdown
+    2. Click the **Run** button (▶️) or press `Shift + F10`
+    3. Wait for the build to complete
+    4. The app will install and launch automatically
+
+    <Info>
+    First launch may take longer as Gradle builds the project and installs on the device.
+    </Info>
+  </Step>
+</Steps>
+
+## Verify Installation
+
+After launching the app, verify that everything works:
+
+<AccordionGroup>
+  <Accordion title="Test User Registration" icon="user-plus">
+    1. On the login screen, click **Sign Up**
+    2. Enter an email and password (min 6 characters)
+    3. Click **Register**
+    4. You should be redirected to the home screen
+  </Accordion>
+
+  <Accordion title="Test NASA API Connection" icon="image">
+    1. Navigate to the **Daily Image** tab
+    2. You should see today's Astronomy Picture of the Day
+    3. If you see an error, verify your NASA API key in `local.properties`
+  </Accordion>
+
+  <Accordion title="Test Firebase Integration" icon="database">
+    1. View an image and click the favorite icon (heart)
+    2. Navigate to the **Favorites** tab
+    3. Your saved image should appear with the option to add comments
+    4. If favorites don't save, check Firebase Realtime Database rules
+  </Accordion>
+</AccordionGroup>
+
+## Project Structure
+
+After installation, your project structure should look like this:
+
+```
+NASAExplorer/
+├── app/
+│   ├── build.gradle.kts
+│   ├── google-services.json          # Firebase config (you created this)
+│   ├── src/
+│   │   └── main/
+│   │       ├── AndroidManifest.xml
+│   │       ├── java/com/ccandeladev/nasaexplorer/
+│   │       └── res/
+├── build.gradle.kts
+├── settings.gradle.kts
+├── local.properties                   # NASA API key (you created this)
+├── gradle.properties
+└── .gitignore
+```
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="Gradle sync fails">
+    **Solution:**
+    1. Check your internet connection
+    2. Verify JDK 17 is configured in Android Studio
+    3. Try **File** → **Invalidate Caches** → **Invalidate and Restart**
+    4. Delete `.gradle` folder and sync again
+  </Accordion>
+
+  <Accordion title="NASA_API_KEY not found error">
+    **Solution:**
+    1. Verify `local.properties` exists in project root (not in `app/` directory)
+    2. Check the file contains: `nasaApiKey=YOUR_KEY`
+    3. Sync Gradle: **File** → **Sync Project with Gradle Files**
+    4. Rebuild: **Build** → **Rebuild Project**
+  </Accordion>
+
+  <Accordion title="google-services.json missing error">
+    **Solution:**
+    1. Verify the file is in `app/google-services.json` (not in project root)
+    2. Check the package name in the file matches: `com.ccandeladev.nasaexplorer`
+    3. Re-download from Firebase Console if needed
+    4. Sync Gradle again
+  </Accordion>
+
+  <Accordion title="Firebase authentication fails">
+    **Solution:**
+    1. Verify Email/Password auth is enabled in Firebase Console
+    2. Check that your `google-services.json` is from the correct Firebase project
+    3. Ensure your device/emulator has internet connectivity
+    4. Check Firebase Console for error logs
+  </Accordion>
+
+  <Accordion title="Out of memory during build">
+    **Solution:**
+    Increase Gradle memory in `gradle.properties`:
+    ```properties
+    org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Quick reference for getting started
+  </Card>
+  <Card title="NASA API Configuration" icon="key" href="/configuration/nasa-api">
+    Learn about API endpoints and usage
+  </Card>
+  <Card title="Firebase Setup" icon="fire" href="/configuration/firebase">
+    Detailed Firebase configuration guide
+  </Card>
+  <Card title="Security Best Practices" icon="shield" href="/configuration/security">
+    Protect your credentials and data
+  </Card>
+</CardGroup>
+
+## Additional Resources
+
+- [Android Studio Documentation](https://developer.android.com/studio/intro)
+- [NASA API Documentation](https://api.nasa.gov/)
+- [Firebase Android Setup](https://firebase.google.com/docs/android/setup)
+- [Kotlin Documentation](https://kotlinlang.org/docs/home.html)
+- [Jetpack Compose Guide](https://developer.android.com/jetpack/compose)

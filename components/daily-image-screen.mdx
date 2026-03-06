@@ -1,0 +1,428 @@
+---
+title: Daily Image Screen
+description: Displays NASA's Astronomy Picture of the Day with favorites integration
+icon: calendar-day
+---
+
+## Overview
+
+The Daily Image Screen fetches and displays NASA's Astronomy Picture of the Day (APOD) from the NASA API. Users can view the image, read its description, and save it to their favorites collection in Firebase.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="APOD Integration" icon="image">
+    Fetches NASA's featured astronomy picture of the day
+  </Card>
+  <Card title="Favorites System" icon="heart">
+    Save and remove images from Firebase favorites collection
+  </Card>
+  <Card title="Expandable Text" icon="arrows-up-down">
+    Collapsible description with "ver más" / "ver menos" toggle
+  </Card>
+  <Card title="Image Loading" icon="spinner">
+    Async image loading with Coil and crossfade animations
+  </Card>
+</CardGroup>
+
+## Screen Components
+
+### Main UI Elements
+
+- **Image Title**: Large headline displaying the image title
+- **Astronomy Image**: 300dp height image with rounded corners
+- **Favorite Button**: Toggle button to save/remove from favorites
+- **Description Card**: Expandable card showing the image explanation
+- **Loading Indicator**: Circular progress indicator during API calls
+
+<Note>
+  Images are loaded asynchronously using Coil with a 1000ms crossfade animation.
+</Note>
+
+## Architecture
+
+### DailyImageScreen Composable
+
+```kotlin
+@Composable
+fun DailyImageScreen(dailyImageViewModel: DailyImageViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) {
+        dailyImageViewModel.loadDailyImage()
+    }
+
+    val dailyImage by dailyImageViewModel.dailyImage.collectAsState()
+    val errorMessage by dailyImageViewModel.errorMessage.collectAsState()
+    val isLoading by dailyImageViewModel.isLoading.collectAsState()
+
+    Box(Modifier.fillMaxSize()) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            errorMessage != null -> {
+                Text(
+                    text = "$errorMessage",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                )
+            }
+            dailyImage != null -> {
+                LazyColumn {
+                    item {
+                        dailyImage?.let { nasaModel ->
+                            dailyImageViewModel.checkIsFavorite(nasaModel.url)
+                            ImageItem(
+                                nasaModel = nasaModel,
+                                dailyImageViewModel = dailyImageViewModel
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## ViewModel Implementation
+
+### DailyImageViewModel
+
+```kotlin
+@HiltViewModel
+class DailyImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _dailyImage = MutableStateFlow<NasaModel?>(null)
+    val dailyImage: StateFlow<NasaModel?> = _dailyImage
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _isFavorite = MutableStateFlow<Boolean>(false)
+    val isFavorite: StateFlow<Boolean> = _isFavorite
+}
+```
+
+### State Management
+
+| State | Type | Purpose |
+|-------|------|----------|
+| `dailyImage` | `StateFlow<NasaModel?>` | Stores the current daily image data |
+| `errorMessage` | `StateFlow<String?>` | Error messages for network or loading failures |
+| `isLoading` | `StateFlow<Boolean>` | Loading state indicator |
+| `isFavorite` | `StateFlow<Boolean>` | Whether the current image is favorited |
+
+## Loading Daily Image
+
+### loadDailyImage Function
+
+```kotlin
+fun loadDailyImage(date: String? = null) {
+    viewModelScope.launch {
+        _isLoading.value = true
+        
+        try {
+            val result = nasaRepository.getImageOfTheDay(date = date)
+            _dailyImage.value = result
+            _errorMessage.value = null
+        } catch (e: Exception) {
+            _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _dailyImage.value = null
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Info>
+  The function accepts an optional `date` parameter to load images from specific dates (format: "yyyy-MM-dd").
+</Info>
+
+## Image Display Component
+
+### ImageItem Composable
+
+```kotlin
+@Composable
+fun ImageItem(nasaModel: NasaModel, dailyImageViewModel: DailyImageViewModel) {
+    val isFavorite by dailyImageViewModel.isFavorite.collectAsState()
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+    ) {
+        Text(
+            text = nasaModel.title,
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(nasaModel.url)
+                .crossfade(1000).build(),
+            contentDescription = nasaModel.title,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp)
+                .padding(top = 24.dp)
+                .clip(RoundedCornerShape(16.dp)),
+            contentScale = ContentScale.Crop,
+            placeholder = painterResource(id = R.drawable.placeholder),
+            error = painterResource(id = R.drawable.placeholder)
+        )
+        
+        // Favorite button and description card
+    }
+}
+```
+
+### Image Loading with Coil
+
+<Steps>
+  <Step title="Image Request Builder">
+    Creates an ImageRequest with the NASA image URL
+    ```kotlin
+    ImageRequest.Builder(LocalContext.current)
+        .data(nasaModel.url)
+        .crossfade(1000).build()
+    ```
+  </Step>
+  
+  <Step title="AsyncImage Component">
+    Displays the image with loading and error states
+    ```kotlin
+    placeholder = painterResource(id = R.drawable.placeholder)
+    error = painterResource(id = R.drawable.placeholder)
+    ```
+  </Step>
+  
+  <Step title="Crossfade Animation">
+    Smooth 1000ms fade-in transition when image loads
+  </Step>
+</Steps>
+
+## Favorites System
+
+### Save to Favorites
+
+```kotlin
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+                _isFavorite.value = true
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Remove from Favorites
+
+```kotlin
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+                
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                
+                _isFavorite.value = false
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al buscar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Check Favorite Status
+
+```kotlin
+fun checkIsFavorite(url: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(url)
+                    .get()
+                    .await()
+                
+                _isFavorite.value = snapshot.exists()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favoritos ${e.message}"
+            }
+        }
+    }
+}
+```
+
+<Warning>
+  All Firebase operations use `.await()` to convert callbacks to suspending functions for use with coroutines.
+</Warning>
+
+## Favorite Button
+
+### Toggle Implementation
+
+```kotlin
+IconButton(onClick = {
+    if (isFavorite) {
+        dailyImageViewModel.removeFromFavorites(nasaModel = nasaModel)
+    } else {
+        dailyImageViewModel.saveToFavorites(nasaModel = nasaModel)
+    }
+}) {
+    Icon(
+        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+        contentDescription = "Favorites border",
+        tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+    )
+}
+```
+
+## Description Card
+
+### Expandable Text Card
+
+```kotlin
+var isExpanded by remember { mutableStateOf(false) }
+
+Card(
+    modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 8.dp)
+        .clickable { isExpanded = !isExpanded },
+    shape = MaterialTheme.shapes.medium,
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    elevation = CardDefaults.cardElevation(4.dp),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+) {
+    Column(Modifier.padding(8.dp)) {
+        Text(
+            text = nasaModel.explanation,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (isExpanded) Int.MAX_VALUE else 3,
+            textAlign = TextAlign.Justify,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        Text(
+            text = if (isExpanded) "ver menos" else "ver más",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+```
+
+<Info>
+  The description is limited to 3 lines when collapsed and expands to show full text when clicked.
+</Info>
+
+## Error Handling
+
+### Network Error
+
+```kotlin
+catch (e: Exception) {
+    _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+    _dailyImage.value = null
+}
+```
+
+### Authentication Error
+
+```kotlin
+if (userId == null) {
+    _errorMessage.value = "Usuario no autenticado"
+}
+```
+
+## Dependencies
+
+### Firebase
+
+```kotlin
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.tasks.await
+```
+
+### Coil Image Loading
+
+```kotlin
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+```
+
+### Hilt Injection
+
+```kotlin
+import androidx.hilt.navigation.compose.hiltViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/dailyimagescreen/
+├── DailyImageScreen.kt
+└── DailyImageViewModel.kt
+```
+
+<Check>
+  **Best Practice**: The screen uses LaunchedEffect to load data only once when the composable enters the composition.
+</Check>

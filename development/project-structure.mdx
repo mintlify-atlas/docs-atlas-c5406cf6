@@ -1,0 +1,335 @@
+---
+title: Project Structure
+description: Understanding NASA Explorer's architecture, file organization, and package structure
+---
+
+## Overview
+
+NASA Explorer follows **MVVM (Model-View-ViewModel)** architecture with clean separation of concerns. The project is organized into distinct layers for data, domain, and presentation.
+
+## Directory Structure
+
+```
+NASAExplorer/
+├── app/
+│   ├── src/
+│   │   ├── main/
+│   │   │   ├── java/com/ccandeladev/nasaexplorer/
+│   │   │   │   ├── data/           # Data layer
+│   │   │   │   ├── domain/         # Domain models
+│   │   │   │   ├── ui/             # Presentation layer
+│   │   │   │   ├── MainActivity.kt
+│   │   │   │   └── NasaExplorerApp.kt
+│   │   │   ├── res/                # Android resources
+│   │   │   └── AndroidManifest.xml
+│   │   ├── androidTest/            # Instrumented tests
+│   │   └── test/                   # Unit tests
+│   ├── build.gradle.kts            # App-level build configuration
+│   └── google-services.json        # Firebase configuration (not in repo)
+├── gradle/
+│   └── libs.versions.toml          # Version catalog
+├── build.gradle.kts                # Project-level build configuration
+├── settings.gradle.kts             # Gradle settings
+├── local.properties                # Local API keys (not in repo)
+└── README.md
+```
+
+## Package Architecture
+
+The application follows a feature-based package structure within the MVVM pattern.
+
+### Data Layer (`data/`)
+
+Handles all data operations including API calls, authentication, and dependency injection.
+
+<CodeGroup>
+```kotlin api/NasaApiService.kt
+// Retrofit service interface for NASA APOD API
+interface NasaApiService {
+    @GET("planetary/apod")
+    suspend fun getApod(
+        @Query("api_key") apiKey: String,
+        @Query("date") date: String? = null
+    ): NasaResponse
+}
+```
+
+```kotlin api/NasaRepository.kt
+// Repository pattern for data access
+class NasaRepository @Inject constructor(
+    private val apiService: NasaApiService
+) {
+    suspend fun getDailyImage(): Result<NasaModel>
+    suspend fun getRandomImages(count: Int): Result<List<NasaModel>>
+}
+```
+</CodeGroup>
+
+#### Data Package Structure
+
+```
+data/
+├── api/
+│   ├── NasaApiService.kt      # Retrofit API interface
+│   ├── NasaRepository.kt      # Data repository
+│   └── NasaResponse.kt        # API response models
+├── auth/
+│   ├── AuthService.kt         # Firebase authentication
+│   └── AuthNetworkModule.kt   # Auth dependency injection
+└── di/
+    ├── ApiNetworkModule.kt    # Retrofit + OkHttp configuration
+    └── FirebaseModule.kt      # Firebase DI module
+```
+
+### Domain Layer (`domain/`)
+
+Contains business logic and domain models that represent the core entities of the application.
+
+<CodeGroup>
+```kotlin domain/NasaModel.kt
+// Main domain model for NASA APOD images
+data class NasaModel(
+    val title: String,
+    val explanation: String,
+    val url: String,
+    val date: String,
+    val mediaType: String
+)
+```
+
+```kotlin domain/FavoriteNasaModel.kt
+// Extended model for user favorites with personal notes
+data class FavoriteNasaModel(
+    val nasaModel: NasaModel,
+    val userId: String,
+    val comment: String,
+    val savedAt: Long
+)
+```
+</CodeGroup>
+
+### UI Layer (`ui/`)
+
+Implements the presentation layer using **Jetpack Compose** with screen-specific ViewModels.
+
+#### UI Package Structure
+
+```
+ui/
+├── core/
+│   ├── NasaExplorerNav.kt      # Navigation graph
+│   └── Routes.kt               # Navigation routes (type-safe)
+├── splashscreen/
+│   ├── SplashScreen.kt
+│   └── SplashViewModel.kt
+├── loginscreen/
+│   ├── LoginScreen.kt
+│   └── LoginScreenViewModel.kt
+├── signupscreen/
+│   ├── SignupScreen.kt
+│   └── SignUpViewModel.kt
+├── homescreen/
+│   ├── HomeScreen.kt
+│   └── HomeScreenViewModel.kt
+├── dailyimagescreen/
+│   ├── DailyImageScreen.kt
+│   └── DailyImageViewModel.kt
+├── randomimagescreen/
+│   ├── RandomImageScreen.kt
+│   └── RandomImageViewModel.kt
+├── rangeimagesscreen/
+│   ├── RangeImagesScreen.kt
+│   └── RangeImagesViewModel.kt
+├── favoritesscreen/
+│   ├── FavoritesScreen.kt
+│   └── FavoritesViewModel.kt
+└── theme/
+    └── Theme.kt                # Material Design 3 theme
+```
+
+<Note>
+Each screen follows the pattern of having a Composable function for the UI and a ViewModel for state management, ensuring clear separation of concerns.
+</Note>
+
+## Key Application Files
+
+### MainActivity.kt
+
+The single activity that hosts the Compose UI.
+
+```kotlin
+@AndroidEntryPoint
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            NasaExplorerTheme {
+                NasaExplorerApp()
+            }
+        }
+    }
+}
+```
+
+### NasaExplorerApp.kt
+
+The root composable that sets up navigation and app structure.
+
+```kotlin
+@Composable
+fun NasaExplorerApp() {
+    val navController = rememberNavController()
+    NasaExplorerNav(navController = navController)
+}
+```
+
+## Build Configuration
+
+The project uses Gradle Kotlin DSL for build configuration.
+
+### Project-level build.gradle.kts
+
+Defines plugins applied to all modules:
+
+```kotlin
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.jetbrains.kotlin.android) apply false
+    alias(libs.plugins.hilt) apply false
+    alias(libs.plugins.compose.compiler) apply false
+    id("com.google.gms.google-services") version "4.4.2" apply false
+}
+```
+
+### App-level build.gradle.kts
+
+Configures the application module with key settings:
+
+<CodeGroup>
+```kotlin Android Configuration
+android {
+    namespace = "com.ccandeladev.nasaexplorer"
+    compileSdk = 34
+    
+    defaultConfig {
+        applicationId = "com.ccandeladev.nasaexplorer"
+        minSdk = 28
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0"
+        
+        // API key injection from local.properties
+        buildConfigField("String", "NASA_API_KEY", "\"$nasaApiKey\"")
+    }
+}
+```
+
+```kotlin Dependencies
+dependencies {
+    // Jetpack Compose
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.material3)
+    
+    // Hilt for dependency injection
+    implementation(libs.dagger.hilt)
+    kapt(libs.dagger.hilt.compiler)
+    
+    // Navigation with type-safe routes
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.kotlinx.serialization.json)
+    
+    // Networking
+    implementation(libs.retrofit2.retrofit)
+    implementation(libs.converter.gson)
+    implementation(libs.coil.compose)
+    
+    // Firebase
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation(libs.firebase.database.ktx)
+}
+```
+</CodeGroup>
+
+## Dependency Injection
+
+The project uses **Hilt** for dependency injection across all layers.
+
+### Module Structure
+
+<Steps>
+  <Step title="ApiNetworkModule">
+    Provides Retrofit instance configured with:
+    - Base URL for NASA API
+    - Gson converter for JSON parsing
+    - OkHttp client with interceptors
+  </Step>
+  
+  <Step title="AuthNetworkModule">
+    Provides Firebase Authentication instance for user management
+  </Step>
+  
+  <Step title="FirebaseModule">
+    Provides Firebase Realtime Database reference for storing favorites
+  </Step>
+</Steps>
+
+## Navigation Architecture
+
+The app uses **type-safe navigation** with Kotlin serialization:
+
+```kotlin
+@Serializable
+sealed class Routes {
+    @Serializable object Splash : Routes()
+    @Serializable object Login : Routes()
+    @Serializable object SignUp : Routes()
+    @Serializable object Home : Routes()
+    @Serializable object DailyImage : Routes()
+    @Serializable object RandomImage : Routes()
+    @Serializable object RangeImages : Routes()
+    @Serializable object Favorites : Routes()
+}
+```
+
+<Note>
+Type-safe navigation eliminates string-based route errors and provides compile-time safety for navigation arguments.
+</Note>
+
+## Resource Organization
+
+Android resources are organized in the standard structure:
+
+```
+res/
+├── drawable/        # Images and vector drawables
+├── values/
+│   ├── colors.xml   # Color definitions
+│   ├── strings.xml  # String resources
+│   └── themes.xml   # Material theme configuration
+└── mipmap/          # App icons (various densities)
+```
+
+The application uses **Material Design 3** components throughout the UI.
+
+## Version Catalog
+
+Dependencies are centralized in `gradle/libs.versions.toml`:
+
+```toml
+[versions]
+kotlin = "2.0.0"
+hilt = "2.49"
+retrofit = "2.9.0"
+navigationCompose = "2.8.0"
+
+[libraries]
+dagger-hilt = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+retrofit2-retrofit = { module = "com.squareup.retrofit2:retrofit", version.ref = "retrofit" }
+
+[plugins]
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+```
+
+This approach ensures consistent dependency versions across the project and simplifies updates.

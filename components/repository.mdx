@@ -1,0 +1,223 @@
+---
+title: 'NASA Repository'
+description: 'Repository pattern implementation for NASA API data management'
+---
+
+## Overview
+
+The `NasaRepository` class serves as an intermediary layer between the API service and the UI. It encapsulates business logic, manages API key handling, and transforms API responses into domain models.
+
+## Architecture Pattern
+
+<Info>
+  This repository follows the **Repository Pattern**, which abstracts data sources and provides a clean API for data access to the rest of the application.
+</Info>
+
+## Implementation
+
+```kotlin
+package com.ccandeladev.nasaexplorer.data.api
+
+import com.ccandeladev.nasaexplorer.BuildConfig
+import com.ccandeladev.nasaexplorer.domain.NasaModel
+import javax.inject.Inject
+
+class NasaRepository @Inject constructor(
+    private val nasaApiService: NasaApiService
+) {
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getImageOfTheDay(date: String? = null): NasaModel {
+        val response = nasaApiService.getImageOfTheDay(
+            apiKey = API_KEY,
+            date = date
+        )
+        return response.toNasaModel()
+    }
+
+    suspend fun getImagesInRange(
+        startDate: String,
+        endDate: String? = null
+    ): List<NasaModel> {
+        val response = nasaApiService.getImagesInRange(
+            apiKey = API_KEY,
+            startDate = startDate,
+            endDate = endDate
+        )
+        return response.map { it.toNasaModel() }
+    }
+
+    suspend fun getRandomImages(count: Int): List<NasaModel> {
+        val response = nasaApiService.getRandomImages(
+            apiKey = API_KEY,
+            count = count
+        )
+        return response.map { it.toNasaModel() }
+    }
+}
+```
+
+## Dependency Injection
+
+The repository is injected using Hilt/Dagger:
+
+<ParamField path="nasaApiService" type="NasaApiService" required>
+  Retrofit service interface injected through constructor
+</ParamField>
+
+```kotlin
+@Inject
+constructor(private val nasaApiService: NasaApiService)
+```
+
+## API Key Management
+
+The NASA API key is securely stored in `BuildConfig` and accessed as a constant:
+
+```kotlin
+companion object {
+    private const val API_KEY = BuildConfig.NASA_API_KEY
+}
+```
+
+<Warning>
+  Never hardcode API keys in your repository. Always use BuildConfig or secure storage mechanisms.
+</Warning>
+
+## Repository Methods
+
+### Get Image of the Day
+
+Retrieves a single astronomy image for a specific date or today.
+
+<ParamField path="date" type="String" optional>
+  Date in YYYY-MM-DD format. Defaults to today if not provided
+</ParamField>
+
+<ResponseField name="return" type="NasaModel">
+  Domain model containing title, URL, date, and explanation
+</ResponseField>
+
+**Usage in ViewModel:**
+
+```kotlin
+viewModelScope.launch {
+    try {
+        val image = repository.getImageOfTheDay()
+        _uiState.value = UiState.Success(image)
+    } catch (e: Exception) {
+        _uiState.value = UiState.Error(e.message)
+    }
+}
+```
+
+### Get Images in Range
+
+Fetches multiple images within a date range.
+
+<ParamField path="startDate" type="String" required>
+  Start date in YYYY-MM-DD format
+</ParamField>
+
+<ParamField path="endDate" type="String" optional>
+  End date in YYYY-MM-DD format. Defaults to current date if not provided
+</ParamField>
+
+<ResponseField name="return" type="List<NasaModel>">
+  List of domain models for each day in the range
+</ResponseField>
+
+**Usage in ViewModel:**
+
+```kotlin
+viewModelScope.launch {
+    try {
+        val images = repository.getImagesInRange(
+            startDate = "2024-01-01",
+            endDate = "2024-01-31"
+        )
+        _imageList.value = images
+    } catch (e: Exception) {
+        _error.value = e.message
+    }
+}
+```
+
+### Get Random Images
+
+Retrieves a specified number of random astronomy images.
+
+<ParamField path="count" type="Int" required>
+  Number of random images to fetch (recommended: 1-100)
+</ParamField>
+
+<ResponseField name="return" type="List<NasaModel>">
+  List of random domain models
+</ResponseField>
+
+**Usage in ViewModel:**
+
+```kotlin
+viewModelScope.launch {
+    try {
+        val randomImages = repository.getRandomImages(count = 10)
+        _randomList.value = randomImages
+    } catch (e: Exception) {
+        _error.value = e.message
+    }
+}
+```
+
+## Data Transformation
+
+The repository automatically converts API responses to domain models using the `toNasaModel()` extension function:
+
+```kotlin
+val response = nasaApiService.getImageOfTheDay(apiKey = API_KEY, date = date)
+return response.toNasaModel()
+```
+
+<Tip>
+  This transformation decouples the data layer from the UI layer, allowing API changes without affecting the rest of the application.
+</Tip>
+
+## Error Handling
+
+All repository methods are suspend functions that propagate exceptions. Handle errors in the calling layer (typically ViewModels):
+
+```kotlin
+try {
+    val result = repository.getImageOfTheDay()
+    // Handle success
+} catch (e: IOException) {
+    // Network error
+} catch (e: HttpException) {
+    // API error
+} catch (e: Exception) {
+    // Generic error
+}
+```
+
+## Testing
+
+Mock the repository in your tests:
+
+```kotlin
+class FakeNasaRepository : NasaRepository {
+    override suspend fun getImageOfTheDay(date: String?): NasaModel {
+        return NasaModel(
+            title = "Test Image",
+            url = "https://example.com/image.jpg",
+            date = "2024-01-01",
+            explanation = "Test explanation"
+        )
+    }
+}
+```
+
+## Related Components
+
+- [NASA API Service](/components/api-service) - Underlying Retrofit interface
+- [Data Models](/components/models) - Domain and response models

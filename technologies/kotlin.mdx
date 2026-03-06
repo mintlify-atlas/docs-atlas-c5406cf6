@@ -1,0 +1,440 @@
+---
+title: "Kotlin"
+description: "Modern, concise, and safe programming language for Android development"
+icon: "code"
+---
+
+## Overview
+
+NASA Explorer is built entirely in **Kotlin**, Google's preferred language for Android development. Kotlin provides a modern, expressive syntax with powerful features like null safety, coroutines, and extension functions that make the codebase more maintainable and less error-prone.
+
+<Info>
+Kotlin is a statically typed programming language that runs on the JVM and is 100% interoperable with Java. It's officially supported by Google for Android development.
+</Info>
+
+## Why Kotlin for NASA Explorer?
+
+<CardGroup cols={2}>
+  <Card title="Null Safety" icon="shield-check">
+    Kotlin's type system eliminates null pointer exceptions at compile time
+  </Card>
+  <Card title="Coroutines" icon="arrows-spin">
+    Built-in support for asynchronous programming with coroutines
+  </Card>
+  <Card title="Concise Syntax" icon="compress">
+    Write less boilerplate code compared to Java
+  </Card>
+  <Card title="Extension Functions" icon="puzzle-piece">
+    Extend existing classes without inheritance
+  </Card>
+</CardGroup>
+
+## Project Configuration
+
+Kotlin is configured with version 2.0.0 and includes modern compiler plugins:
+
+```kotlin build.gradle.kts
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    kotlin("kapt")  // Annotation processing
+    alias(libs.plugins.kotlinxSerialization)  // Type-safe navigation
+    alias(libs.plugins.compose.compiler)  // Compose compiler for Kotlin 2.0
+}
+
+android {
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.kotlinx.serialization.json)
+}
+```
+
+## Kotlin Features in Action
+
+### Data Classes
+
+Kotlin data classes provide automatic implementations of `equals()`, `hashCode()`, `toString()`, and `copy()`:
+
+```kotlin NasaResponse.kt
+package com.ccandeladev.nasaexplorer.data.api
+
+import com.ccandeladev.nasaexplorer.domain.NasaModel
+
+data class NasaResponse(
+    val copyright: String?,
+    val date: String,
+    val explanation: String,
+    val hdurl: String?,
+    val media_type: String,
+    val service_version: String,
+    val title: String,
+    val url: String
+) {
+    // Extension function to convert API response to domain model
+    fun toNasaModel(): NasaModel {
+        return NasaModel(
+            title = title,
+            url = url,
+            explanation = explanation
+        )
+    }
+}
+```
+
+```kotlin NasaModel.kt
+package com.ccandeladev.nasaexplorer.domain
+
+data class NasaModel(
+    val title: String,
+    val url: String,
+    val explanation: String
+)
+```
+
+### Coroutines for Async Operations
+
+Kotlin coroutines enable clean asynchronous code without callback hell:
+
+```kotlin NasaRepository.kt
+package com.ccandeladev.nasaexplorer.data.api
+
+import com.ccandeladev.nasaexplorer.BuildConfig
+import com.ccandeladev.nasaexplorer.domain.NasaModel
+import javax.inject.Inject
+
+class NasaRepository @Inject constructor(
+    private val nasaApiService: NasaApiService
+) {
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    // Suspend function for getting daily image
+    suspend fun getImageOfTheDay(date: String? = null): NasaModel {
+        val response = nasaApiService.getImageOfTheDay(apiKey = API_KEY, date = date)
+        return response.toNasaModel()
+    }
+
+    // Suspend function for getting images in a date range
+    suspend fun getImagesInRange(startDate: String, endDate: String? = null): List<NasaModel> {
+        val response = nasaApiService.getImagesInRange(
+            apiKey = API_KEY,
+            startDate = startDate,
+            endDate = endDate
+        )
+        return response.map { it.toNasaModel() }
+    }
+
+    // Suspend function for random images
+    suspend fun getRandomImages(count: Int): List<NasaModel> {
+        val response = nasaApiService.getRandomImages(apiKey = API_KEY, count = count)
+        return response.map { it.toNasaModel() }
+    }
+}
+```
+
+<Note>
+The `suspend` keyword marks functions that can be paused and resumed, enabling efficient async operations without blocking threads.
+</Note>
+
+### ViewModel with Coroutines
+
+ViewModels use `viewModelScope` to launch coroutines that are automatically cancelled:
+
+```kotlin DailyImageViewModel.kt
+@HiltViewModel
+class DailyImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _dailyImage = MutableStateFlow<NasaModel?>(null)
+    val dailyImage: StateFlow<NasaModel?> = _dailyImage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    fun loadDailyImage(date: String? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val result = nasaRepository.getImageOfTheDay(date = date)
+                _dailyImage.value = result
+                _errorMessage.value = null
+            } catch (e: Exception) {
+                _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi"
+                _dailyImage.value = null
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+### Suspend Functions with Firebase
+
+Kotlin's `suspendCancellableCoroutine` converts callback-based APIs to suspending functions:
+
+```kotlin AuthService.kt
+package com.ccandeladev.nasaexplorer.data.auth
+
+import com.google.firebase.auth.AuthResult
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.tasks.await
+import javax.inject.Inject
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+class AuthService @Inject constructor(private val firebaseAuth: FirebaseAuth) {
+
+    // Using await() extension from kotlinx-coroutines-play-services
+    suspend fun login(email: String, password: String): FirebaseUser? {
+        return firebaseAuth.signInWithEmailAndPassword(email, password).await().user
+    }
+
+    // Using suspendCancellableCoroutine for manual control
+    suspend fun register(email: String, password: String): FirebaseUser? {
+        return suspendCancellableCoroutine { cancellableContinuation ->
+            firebaseAuth.createUserWithEmailAndPassword(email, password)
+                .addOnSuccessListener { it: AuthResult? ->
+                    val user: FirebaseUser? = it?.user
+                    cancellableContinuation.resume(user)
+                }
+                .addOnFailureListener { it: Exception ->
+                    cancellableContinuation.resumeWithException(it)
+                }
+        }
+    }
+
+    fun userLogout() {
+        firebaseAuth.signOut()
+    }
+
+    fun isUserLogged(): Boolean {
+        return getCurrentUser() != null
+    }
+
+    private fun getCurrentUser() = firebaseAuth.currentUser
+}
+```
+
+## Null Safety
+
+Kotlin's type system distinguishes between nullable and non-nullable types:
+
+```kotlin NasaApiService.kt
+interface NasaApiService {
+    @GET("planetary/apod")
+    suspend fun getImageOfTheDay(
+        @Query("api_key") apiKey: String,
+        @Query("date") date: String? = null  // Nullable parameter
+    ): NasaResponse
+
+    @GET("planetary/apod")
+    suspend fun getImagesInRange(
+        @Query("api_key") apiKey: String,
+        @Query("start_date") startDate: String,
+        @Query("end_date") endDate: String? = null  // Optional end date
+    ): List<NasaResponse>
+}
+```
+
+### Safe Null Handling
+
+```kotlin DailyImageScreen.kt
+// Safe call operator
+dailyImage?.let { nasaModel ->
+    dailyImageViewModel.checkIsFavorite(nasaModel.url)
+    ImageItem(nasaModel = nasaModel, dailyImageViewModel = dailyImageViewModel)
+}
+
+// Elvis operator for default values
+val userId = firebaseAuth.currentUser?.uid ?: return
+
+// Null checks with if expressions
+if (userId != null) {
+    // Safe to use userId
+}
+```
+
+## Extension Functions
+
+Extend existing classes without modifying their source code:
+
+```kotlin NasaResponse.kt
+// Extension function on NasaResponse data class
+fun NasaResponse.toNasaModel(): NasaModel {
+    return NasaModel(
+        title = title,
+        url = url,
+        explanation = explanation
+    )
+}
+
+// Usage
+val nasaModel = apiResponse.toNasaModel()
+```
+
+## Sealed Classes & Object Declarations
+
+### Object Declarations for Singletons
+
+Kotlin's `object` keyword creates thread-safe singletons:
+
+```kotlin ApiNetworkModule.kt
+@Module
+@InstallIn(SingletonComponent::class)
+object ApiNetworkModule {
+    private const val BASE_URL = "https://api.nasa.gov/"
+
+    @Singleton
+    @Provides
+    fun provideNasaApiService(retrofit: Retrofit): NasaApiService {
+        return retrofit.create(NasaApiService::class.java)
+    }
+
+    @Singleton
+    @Provides
+    fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .client(okHttpClient)
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Singleton
+    @Provides
+    fun provideHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder().build()
+    }
+}
+```
+
+## Lambda Expressions
+
+Kotlin's concise lambda syntax makes functional programming elegant:
+
+```kotlin HomeScreen.kt
+NavigationBarItem(
+    selected = selectedItem == 1,
+    onClick = {
+        if (selectedItem != 1) {
+            selectedItem = 1
+            navController.navigate(Routes.DailyImage) {
+                popUpTo<Routes.Home> { inclusive = false }
+            }
+        }
+    },
+    icon = {
+        Icon(
+            imageVector = Icons.Filled.Today,
+            contentDescription = "Daily Image"
+        )
+    },
+    label = { Text(text = "Diaria") }
+)
+```
+
+## Property Delegation
+
+Kotlin's property delegation simplifies common patterns:
+
+```kotlin
+// Lazy initialization
+val retrofit: Retrofit by lazy {
+    Retrofit.Builder()
+        .baseUrl(BASE_URL)
+        .build()
+}
+
+// Observable properties in Compose
+var selectedItem by remember { mutableIntStateOf(-1) }
+var isExpanded by remember { mutableStateOf(false) }
+```
+
+## Kotlin Flows
+
+Type-safe reactive streams for handling data streams:
+
+```kotlin DailyImageViewModel.kt
+private val _dailyImage = MutableStateFlow<NasaModel?>(null)
+val dailyImage: StateFlow<NasaModel?> = _dailyImage
+
+private val _errorMessage = MutableStateFlow<String?>(null)
+val errorMessage: StateFlow<String?> = _errorMessage
+
+private val _isLoading = MutableStateFlow(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+
+// In Composable
+val dailyImage by dailyImageViewModel.dailyImage.collectAsState()
+val errorMessage by dailyImageViewModel.errorMessage.collectAsState()
+val isLoading by dailyImageViewModel.isLoading.collectAsState()
+```
+
+## Benefits in NASA Explorer
+
+<AccordionGroup>
+  <Accordion title="Reduced Boilerplate">
+    Kotlin's concise syntax means less code to write and maintain. Data classes, lambda expressions, and type inference eliminate verbose Java patterns.
+  </Accordion>
+  
+  <Accordion title="Safer Code">
+    Null safety eliminates NullPointerExceptions at compile time. Smart casts and type checking catch errors early.
+  </Accordion>
+  
+  <Accordion title="Better Async">
+    Coroutines provide structured concurrency with automatic cancellation, making async code easier to read and less error-prone than callbacks or RxJava.
+  </Accordion>
+  
+  <Accordion title="Modern Language Features">
+    Extension functions, sealed classes, and inline functions enable powerful abstractions without runtime overhead.
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Embrace Null Safety">
+    Use nullable types explicitly and leverage safe call operators (`?.`) and Elvis operators (`?:`).
+  </Step>
+  
+  <Step title="Use Coroutines for Async">
+    Replace callbacks with suspend functions and use structured concurrency with viewModelScope.
+  </Step>
+  
+  <Step title="Prefer Data Classes">
+    Use data classes for DTOs and domain models to get automatic implementations of common methods.
+  </Step>
+  
+  <Step title="Leverage Extension Functions">
+    Create extension functions to add domain-specific operations without cluttering original classes.
+  </Step>
+</Steps>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Kotlin Docs" icon="book" href="https://kotlinlang.org/docs/home.html">
+    Official Kotlin language documentation
+  </Card>
+  <Card title="Kotlin for Android" icon="android" href="https://developer.android.com/kotlin">
+    Google's guide to using Kotlin for Android development
+  </Card>
+  <Card title="Kotlin Coroutines" icon="arrows-spin" href="https://kotlinlang.org/docs/coroutines-overview.html">
+    Deep dive into Kotlin coroutines for asynchronous programming
+  </Card>
+  <Card title="Kotlin Playground" icon="play" href="https://play.kotlinlang.org/">
+    Try Kotlin code in your browser
+  </Card>
+</CardGroup>

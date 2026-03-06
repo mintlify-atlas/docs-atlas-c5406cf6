@@ -1,0 +1,542 @@
+---
+title: 'Security Configuration'
+description: 'Security best practices and configuration for NASAExplorer'
+icon: 'shield'
+---
+
+## Overview
+
+Security is a critical aspect of NASAExplorer. This guide covers best practices for protecting sensitive credentials, implementing Firebase security rules, and maintaining a secure development workflow.
+
+## Sensitive Files Management
+
+NASAExplorer keeps sensitive configuration files out of version control to prevent credential exposure.
+
+### Protected Files
+
+<Warning>
+  **Never commit these files to version control:**
+  - `local.properties` - Contains NASA API key
+  - `google-services.json` - Contains Firebase configuration
+  - Any `.env` files with credentials
+  - `keystore` files for app signing
+</Warning>
+
+### .gitignore Configuration
+
+The project's `.gitignore` file includes:
+
+```gitignore .gitignore
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+```
+
+<Note>
+  Notice that `local.properties` is listed twice for redundancy. This ensures it's never accidentally committed.
+</Note>
+
+## API Key Security
+
+### NASA API Key Protection
+
+The NASA API key is stored securely using BuildConfig:
+
+#### 1. Storage in local.properties
+
+```properties local.properties
+nasaApiKey=YOUR_NASA_API_KEY_HERE
+```
+
+#### 2. Injection at Build Time
+
+```kotlin app/build.gradle.kts
+// Read local.properties
+val localProperties = Properties().apply {
+    load(project.rootProject.file("local.properties").inputStream())
+}
+
+// Extract API key
+val nasaApiKey: String = localProperties.getProperty("nasaApiKey") ?: ""
+
+android {
+    defaultConfig {
+        // Inject as BuildConfig field (not visible in source code)
+        buildConfigField("String", "NASA_API_KEY", "\"$nasaApiKey\"")
+    }
+    
+    buildFeatures {
+        buildConfig = true
+    }
+}
+```
+
+#### 3. Access via BuildConfig
+
+```kotlin NasaRepository.kt
+class NasaRepository @Inject constructor(
+    private val nasaApiService: NasaApiService
+) {
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getImageOfTheDay(date: String? = null): NasaModel {
+        val response = nasaApiService.getImageOfTheDay(
+            apiKey = API_KEY,
+            date = date
+        )
+        return response.toNasaModel()
+    }
+}
+```
+
+### Why This Approach?
+
+<Steps>
+  <Step title="Build-Time Injection">
+    The API key is injected during compilation, not stored in source code.
+  </Step>
+  
+  <Step title="ProGuard Protection">
+    In release builds, ProGuard obfuscates the BuildConfig class, making reverse engineering more difficult.
+  </Step>
+  
+  <Step title="No Source Code Exposure">
+    The key never appears in `.kt` files that get committed to Git.
+  </Step>
+</Steps>
+
+<Warning>
+  **Limitation**: BuildConfig fields can still be extracted from APK files through reverse engineering. For production apps with strict security requirements, consider using a backend API proxy instead.
+</Warning>
+
+## Firebase Security
+
+### Authentication Security
+
+The `AuthService` implements secure authentication patterns:
+
+```kotlin AuthService.kt
+class AuthService @Inject constructor(
+    private val firebaseAuth: FirebaseAuth
+) {
+
+    suspend fun login(email: String, password: String): FirebaseUser? {
+        return firebaseAuth
+            .signInWithEmailAndPassword(email, password)
+            .await()
+            .user
+    }
+
+    suspend fun register(email: String, password: String): FirebaseUser? {
+        return firebaseAuth
+            .createUserWithEmailAndPassword(email, password)
+            .await()
+            .user
+    }
+
+    fun userLogout() {
+        firebaseAuth.signOut()
+    }
+
+    fun isUserLogged(): Boolean {
+        return getCurrentUser() != null
+    }
+
+    private fun getCurrentUser() = firebaseAuth.currentUser
+}
+```
+
+### Best Practices Implemented
+
+1. **Coroutine-based async operations** - No blocking calls
+2. **Null safety** - Proper handling of nullable `FirebaseUser`
+3. **Error propagation** - Exceptions bubble up for proper handling
+4. **Session management** - Clean logout functionality
+
+## Firebase Realtime Database Rules
+
+### Development Rules (Current)
+
+For development, the database uses test mode rules:
+
+```json
+{
+  "rules": {
+    ".read": true,
+    ".write": true
+  }
+}
+```
+
+<Warning>
+  **Test mode allows unrestricted access.** This is acceptable for development but must be changed before production deployment.
+</Warning>
+
+### Production Rules (Recommended)
+
+For production, implement user-specific access control:
+
+```json firebase-rules.json
+{
+  "rules": {
+    "favorites": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['id', 'title', 'url'])",
+        "$favoriteId": {
+          ".validate": "newData.child('id').isString() && newData.child('title').isString() && newData.child('url').isString()"
+        }
+      }
+    },
+    "comments": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "$favoriteId": {
+          ".validate": "newData.isString() && newData.val().length <= 1000"
+        }
+      }
+    }
+  }
+}
+```
+
+### Rule Breakdown
+
+#### Favorites Rules
+
+```json
+"favorites": {
+  "$uid": {
+    ".read": "auth != null && auth.uid == $uid",
+    ".write": "auth != null && auth.uid == $uid"
+  }
+}
+```
+
+- **User isolation**: Each user can only access their own favorites
+- **Authentication required**: `auth != null` ensures user is logged in
+- **UID matching**: `auth.uid == $uid` verifies user owns the data
+
+#### Comments Rules
+
+```json
+"comments": {
+  "$uid": {
+    "$favoriteId": {
+      ".validate": "newData.isString() && newData.val().length <= 1000"
+    }
+  }
+}
+```
+
+- **Type validation**: Ensures comments are strings
+- **Length limit**: Prevents abuse with 1000 character max
+- **User-scoped**: Comments tied to user's favorites
+
+### Applying Security Rules
+
+<Steps>
+  <Step title="Access Firebase Console">
+    Navigate to [Firebase Console](https://console.firebase.google.com/) and select your project.
+  </Step>
+  
+  <Step title="Open Realtime Database Rules">
+    1. Go to **Realtime Database** section
+    2. Click on the **Rules** tab
+  </Step>
+  
+  <Step title="Update Rules">
+    Replace the existing rules with the production rules provided above.
+  </Step>
+  
+  <Step title="Publish Changes">
+    Click **Publish** to activate the new security rules.
+  </Step>
+  
+  <Step title="Test Your App">
+    Verify that:
+    - Users can only access their own favorites
+    - Unauthenticated requests are denied
+    - Data validation works correctly
+  </Step>
+</Steps>
+
+<Warning>
+  After applying production rules, test thoroughly. Users will be unable to access data if authentication fails or rules are misconfigured.
+</Warning>
+
+## Code-Level Security
+
+### User Authentication Checks
+
+All database operations verify user authentication:
+
+```kotlin FavoritesViewModel.kt
+fun loadFavoriteImages() {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                val snapshot = favoriteRef.get().await()
+                // ... process data
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al mostrar la lista de favoritos"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Key Security Patterns
+
+1. **Null-safe UID extraction**
+   ```kotlin
+   val userId = firebaseAuth.currentUser?.uid
+   if (userId != null) { /* proceed */ }
+   ```
+
+2. **User-scoped references**
+   ```kotlin
+   firebaseDatabase.reference.child("favorites").child(userId)
+   ```
+
+3. **Error handling**
+   ```kotlin
+   try {
+       // Database operation
+   } catch (e: Exception) {
+       _errorMessage.value = "Error message"
+   }
+   ```
+
+4. **Coroutine safety**
+   ```kotlin
+   viewModelScope.launch {
+       // Async operation with lifecycle awareness
+   }
+   ```
+
+## Network Security
+
+### HTTPS Enforcement
+
+All network communication uses HTTPS:
+
+```kotlin ApiNetworkModule.kt
+@Module
+@InstallIn(SingletonComponent::class)
+object ApiNetworkModule {
+    private const val BASE_URL = "https://api.nasa.gov/"  // HTTPS
+
+    @Singleton
+    @Provides
+    fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .client(okHttpClient)
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+}
+```
+
+Firebase automatically uses HTTPS:
+```
+https://nasaexplorer-f002d-default-rtdb.europe-west1.firebasedatabase.app
+```
+
+### Network Security Config (Optional)
+
+For additional security, you can add a network security configuration:
+
+```xml res/xml/network_security_config.xml
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.nasa.gov</domain>
+        <domain includeSubdomains="true">firebase.google.com</domain>
+    </domain-config>
+</network-security-config>
+```
+
+Reference in `AndroidManifest.xml`:
+```xml
+<application
+    android:networkSecurityConfig="@xml/network_security_config"
+    ...>
+</application>
+```
+
+## ProGuard/R8 Configuration
+
+For release builds, enable code obfuscation:
+
+```kotlin app/build.gradle.kts
+android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true  // Enable code shrinking
+            isShrinkResources = true  // Remove unused resources
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+}
+```
+
+### ProGuard Rules for Firebase
+
+```proguard proguard-rules.pro
+# Firebase
+-keepattributes Signature
+-keepattributes *Annotation*
+-keepattributes EnclosingMethod
+-keepattributes InnerClasses
+
+# Gson (used by Retrofit)
+-keepattributes Signature
+-keep class com.ccandeladev.nasaexplorer.data.api.** { *; }
+-keep class com.ccandeladev.nasaexplorer.domain.** { *; }
+
+# Firebase Realtime Database
+-keepclassmembers class com.ccandeladev.nasaexplorer.domain.** {
+    *;
+}
+```
+
+## Security Checklist
+
+<Steps>
+  <Step title="Credential Protection">
+    - [ ] `local.properties` in `.gitignore`
+    - [ ] `google-services.json` excluded from version control
+    - [ ] No hardcoded API keys in source code
+    - [ ] BuildConfig used for API key access
+  </Step>
+  
+  <Step title="Firebase Security">
+    - [ ] Email/password authentication enabled
+    - [ ] Production database rules implemented
+    - [ ] User authentication verified before database access
+    - [ ] User-scoped data references used
+  </Step>
+  
+  <Step title="Network Security">
+    - [ ] HTTPS enforced for all API calls
+    - [ ] Firebase connections use secure URLs
+    - [ ] Network security config implemented (optional)
+    - [ ] Certificate pinning considered for sensitive apps
+  </Step>
+  
+  <Step title="Build Security">
+    - [ ] ProGuard enabled for release builds
+    - [ ] Code obfuscation active
+    - [ ] Resource shrinking enabled
+    - [ ] Signed APK with secure keystore
+  </Step>
+  
+  <Step title="Testing">
+    - [ ] Security rules tested thoroughly
+    - [ ] Unauthorized access attempts blocked
+    - [ ] Error messages don't leak sensitive info
+    - [ ] Authentication flows working correctly
+  </Step>
+</Steps>
+
+## Incident Response
+
+### If API Key is Compromised
+
+<Steps>
+  <Step title="Rotate Key Immediately">
+    1. Go to [NASA API Portal](https://api.nasa.gov/)
+    2. Generate a new API key
+    3. Update `local.properties` with new key
+    4. Invalidate the old key if possible
+  </Step>
+  
+  <Step title="Review Access Logs">
+    Check if the compromised key was abused (rate limit exceeded, unusual usage patterns).
+  </Step>
+  
+  <Step title="Audit Repository">
+    Search Git history to ensure the key was never committed:
+    ```bash
+    git log -p | grep "nasaApiKey"
+    ```
+  </Step>
+</Steps>
+
+### If Firebase Config is Exposed
+
+<Steps>
+  <Step title="Assess Risk">
+    Determine what was exposed (public keys vs. sensitive credentials).
+  </Step>
+  
+  <Step title="Update Security Rules">
+    Immediately apply strict production security rules if not already done.
+  </Step>
+  
+  <Step title="Rotate Credentials">
+    If sensitive credentials were exposed:
+    1. Create a new Firebase project
+    2. Migrate users and data
+    3. Update app configuration
+    4. Delete compromised project
+  </Step>
+  
+  <Step title="Monitor Activity">
+    Check Firebase Console for:
+    - Unusual authentication attempts
+    - Unexpected database reads/writes
+    - Abnormal traffic patterns
+  </Step>
+</Steps>
+
+## Additional Security Resources
+
+- [Firebase Security Documentation](https://firebase.google.com/docs/rules)
+- [Android Security Best Practices](https://developer.android.com/topic/security/best-practices)
+- [OWASP Mobile Security](https://owasp.org/www-project-mobile-security/)
+- [NASA API Terms of Use](https://api.nasa.gov/)
+
+## Next Steps
+
+With security configured:
+
+1. Review [Firebase configuration](/configuration/firebase)
+2. Learn about [testing strategies](/development/testing)
+3. Review [building and deployment](/development/building)
+
+<Note>
+  Security is an ongoing process. Regularly review and update your security measures as new vulnerabilities and best practices emerge.
+</Note>

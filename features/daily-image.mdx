@@ -1,0 +1,365 @@
+---
+title: 'Daily Image'
+description: 'Explore NASA Astronomy Picture of the Day (APOD) feature'
+icon: 'calendar-day'
+---
+
+## Overview
+
+The Daily Image feature displays NASA's Astronomy Picture of the Day (APOD), showcasing stunning space imagery with detailed explanations. Users can view today's image or select any specific date to explore past astronomical wonders.
+
+## User Experience
+
+<Steps>
+  <Step title="View Today's Image">
+    Launch the Daily Image screen to see today's featured astronomy picture with its title, date, and full explanation.
+  </Step>
+  
+  <Step title="Select a Date">
+    Choose any date to view the APOD from that specific day, allowing exploration of NASA's historical image archive.
+  </Step>
+  
+  <Step title="Save to Favorites">
+    Tap the favorite icon to save images to your personal collection for easy access later.
+  </Step>
+</Steps>
+
+<Info>
+  The Daily Image feature uses NASA's official APOD API, which has been providing daily space images since June 16, 1995.
+</Info>
+
+## API Integration
+
+### NASA API Service
+
+The `NasaApiService` defines the API endpoint for fetching daily images:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaApiService.kt
+interface NasaApiService {
+
+    @GET("planetary/apod")
+    suspend fun getImageOfTheDay(
+        @Query("api_key") apiKey: String,
+        @Query("date") date: String? = null
+    ): NasaResponse
+}
+```
+
+**Parameters:**
+- `api_key`: Your NASA API key for authentication
+- `date` (optional): Date in YYYY-MM-DD format. If not provided, returns today's image
+
+### Repository Layer
+
+The `NasaRepository` acts as an intermediary between the API and UI:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaRepository.kt
+class NasaRepository @Inject constructor(private val nasaApiService: NasaApiService) {
+
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getImageOfTheDay(date: String? = null): NasaModel {
+        val response = nasaApiService.getImageOfTheDay(apiKey = API_KEY, date = date)
+        return response.toNasaModel()
+    }
+}
+```
+
+## Data Models
+
+### NasaResponse
+
+The raw API response model:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaResponse.kt
+data class NasaResponse(
+    @SerializedName("title") val title: String,
+    @SerializedName("url") val url: String,
+    @SerializedName("date") val date: String,
+    @SerializedName("explanation") val explanation: String,
+    @SerializedName("media_type") val mediaType: String?,
+    @SerializedName("hdurl") val hdUrl: String?,
+    @SerializedName("service_version") val serviceVersion: String?,
+    @SerializedName("copyright") val copyright: String?
+)
+
+fun NasaResponse.toNasaModel(): NasaModel {
+    return NasaModel(
+        title = this.title,
+        url = this.url,
+        date = this.date,
+        explanation = this.explanation
+    )
+}
+```
+
+### NasaModel
+
+The domain model used in the UI layer:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/domain/NasaModel.kt
+data class NasaModel(
+    val title: String,
+    val url: String,
+    val date: String,
+    val explanation: String
+)
+```
+
+<Note>
+  The app transforms the full API response into a simplified domain model, keeping only the essential fields needed for the UI.
+</Note>
+
+## ViewModel Architecture
+
+### DailyImageViewModel
+
+Handles business logic and state management for the daily image screen:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/dailyimagescreen/DailyImageViewModel.kt
+@HiltViewModel
+class DailyImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _dailyImage = MutableStateFlow<NasaModel?>(null)
+    val dailyImage: StateFlow<NasaModel?> = _dailyImage
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _isFavorite = MutableStateFlow<Boolean>(false)
+    val isFavorite: StateFlow<Boolean> = _isFavorite
+
+    /**
+     * Load the daily image
+     * @param date Optional parameter to load image from a specific date
+     */
+    fun loadDailyImage(date: String? = null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val result = nasaRepository.getImageOfTheDay(date = date)
+                _dailyImage.value = result
+                _errorMessage.value = null
+            } catch (e: Exception) {
+                _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+                _dailyImage.value = null
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+### State Management
+
+The ViewModel exposes four key states:
+
+<CardGroup cols={2}>
+  <Card title="dailyImage" icon="image">
+    Contains the current image data (title, URL, date, explanation) or null if not loaded.
+  </Card>
+  
+  <Card title="isLoading" icon="spinner">
+    Boolean flag to show/hide loading indicators during API calls.
+  </Card>
+  
+  <Card title="errorMessage" icon="triangle-exclamation">
+    Error message string for displaying connection or API errors.
+  </Card>
+  
+  <Card title="isFavorite" icon="star">
+    Tracks whether the current image is saved in the user's favorites.
+  </Card>
+</CardGroup>
+
+## Favorites Integration
+
+### Save to Favorites
+
+Users can save daily images to their personal collection:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/dailyimagescreen/DailyImageViewModel.kt
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+                _isFavorite.value = true
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Remove from Favorites
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/dailyimagescreen/DailyImageViewModel.kt
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+                
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                _isFavorite.value = false
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al buscar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Check Favorite Status
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/dailyimagescreen/DailyImageViewModel.kt
+fun checkIsFavorite(url: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(url)
+                    .get()
+                    .await()
+                
+                _isFavorite.value = snapshot.exists()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favoritos ${e.message}"
+            }
+        }
+    }
+}
+```
+
+<Tip>
+  The daily image screen doesn't automatically check favorite status on load, as newly fetched images are never favorites by default.
+</Tip>
+
+## Firebase Database Structure
+
+Favorites are stored per user in Firebase Realtime Database:
+
+```
+favorites/
+  └── {userId}/
+      └── {pushId}/
+          ├── id: "{pushId}"
+          ├── title: "Image Title"
+          └── url: "https://..."
+```
+
+## Error Handling
+
+The feature gracefully handles common errors:
+
+<AccordionGroup>
+  <Accordion title="Network Connection Error">
+    Displays: "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+  </Accordion>
+  
+  <Accordion title="API Error">
+    Caught in the try-catch block and displayed via `errorMessage` state.
+  </Accordion>
+  
+  <Accordion title="User Not Authenticated">
+    Shows: "Usuario no autenticado" when trying to save favorites without being logged in.
+  </Accordion>
+  
+  <Accordion title="Firebase Save Error">
+    Displays: "Error al guardar favorito" with the exception message.
+  </Accordion>
+</AccordionGroup>
+
+## Developer Implementation
+
+### Setting Up the Daily Image Feature
+
+<Steps>
+  <Step title="Configure NASA API Key">
+    Add your NASA API key to `BuildConfig`:
+    ```kotlin
+    android {
+        buildTypes {
+            debug {
+                buildConfigField "String", "NASA_API_KEY", '"YOUR_API_KEY_HERE"'
+            }
+        }
+    }
+    ```
+  </Step>
+  
+  <Step title="Inject Dependencies">
+    Use Hilt to inject the ViewModel in your composable:
+    ```kotlin
+    @Composable
+    fun DailyImageScreen(
+        dailyImageViewModel: DailyImageViewModel = hiltViewModel()
+    ) {
+        // Access ViewModel properties
+    }
+    ```
+  </Step>
+  
+  <Step title="Collect State Flows">
+    Observe state changes in your UI:
+    ```kotlin
+    val dailyImage by dailyImageViewModel.dailyImage.collectAsState()
+    val isLoading by dailyImageViewModel.isLoading.collectAsState()
+    val errorMessage by dailyImageViewModel.errorMessage.collectAsState()
+    ```
+  </Step>
+  
+  <Step title="Load Image">
+    Call `loadDailyImage()` when the screen launches:
+    ```kotlin
+    LaunchedEffect(Unit) {
+        dailyImageViewModel.loadDailyImage()
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Always handle the loading and error states in your UI to provide good user experience during network operations.
+</Warning>

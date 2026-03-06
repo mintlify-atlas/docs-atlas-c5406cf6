@@ -1,0 +1,294 @@
+---
+title: 'Login Screen'
+description: 'Authentication screen for user login with email and password validation'
+icon: 'arrow-right-to-bracket'
+---
+
+## Overview
+
+The Login Screen provides a secure authentication interface for users to access the NASA Explorer application. It features email and password input fields with comprehensive validation, loading states, and error handling.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Email Validation" icon="envelope">
+    Validates email format using Android's EMAIL_ADDRESS pattern matcher
+  </Card>
+  <Card title="Password Security" icon="lock">
+    Enforces minimum 6-character password requirement
+  </Card>
+  <Card title="Loading States" icon="spinner">
+    Displays circular progress indicator during authentication
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Shows toast messages for validation and authentication errors
+  </Card>
+</CardGroup>
+
+## Screen Components
+
+### Main UI Elements
+
+The login screen consists of the following visual components:
+
+- **Logo Image**: Planet icon (250x250dp) with rounded corners and white tint
+- **Email TextField**: Outlined text field for email input
+- **Password TextField**: Outlined text field for password input with secure entry
+- **Sign Up Link**: Clickable text to navigate to registration screen
+- **Login Button**: Full-width button at the bottom to submit credentials
+- **Progress Indicator**: Circular loading indicator shown during authentication
+
+<Note>
+  All text fields use white color styling to contrast against the black background theme.
+</Note>
+
+## Architecture
+
+### LoginScreen Composable
+
+The main composable function that renders the login interface:
+
+```kotlin
+@Composable
+fun LoginScreen(
+    loginScreenViewModel: LoginScreenViewModel = hiltViewModel(),
+    onNavigationToHome: () -> Unit,
+    onNavigationToSignUp: () -> Unit
+) {
+    val isLoading by loginScreenViewModel.isLoading.collectAsState()
+    val errorMessage by loginScreenViewModel.errorMessage.collectAsState()
+
+    // Error message handling
+    if (errorMessage.isNotEmpty()) {
+        Toast.makeText(LocalContext.current, errorMessage, Toast.LENGTH_LONG).show()
+        loginScreenViewModel.resetErrorMessage()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
+        Arrangement.Top,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // UI components
+    }
+}
+```
+
+### ViewModel State Management
+
+The `LoginScreenViewModel` manages authentication state and business logic:
+
+```kotlin
+@HiltViewModel
+class LoginScreenViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+
+    fun login(email: String, password: String, onNavigateToHome: () -> Unit) {
+        // Validation and authentication logic
+    }
+}
+```
+
+## Validation Logic
+
+### Input Validation
+
+The screen performs comprehensive validation before attempting authentication:
+
+<Steps>
+  <Step title="Empty Field Check">
+    Verifies that both email and password fields are not blank
+    ```kotlin
+    if (email.isBlank() || password.isBlank()) {
+        _errorMessage.value = "Los campos no pueden estar vacios"
+        return
+    }
+    ```
+  </Step>
+  
+  <Step title="Email Format Validation">
+    Validates email format using Android's pattern matcher
+    ```kotlin
+    private fun isValidEmail(email: String): Boolean {
+        return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
+    }
+    ```
+  </Step>
+  
+  <Step title="Password Length Check">
+    Ensures password meets minimum length requirement
+    ```kotlin
+    if (password.length < 6) {
+        _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+        return
+    }
+    ```
+  </Step>
+</Steps>
+
+## Authentication Flow
+
+### Login Process
+
+The authentication flow uses Kotlin coroutines for asynchronous operations:
+
+```kotlin
+fun login(email: String, password: String, onNavigateToHome: () -> Unit) {
+    viewModelScope.launch {
+        _isLoading.value = true
+
+        try {
+            val result = withContext(Dispatchers.IO) {
+                authService.login(email = email, password = password)
+            }
+            
+            if (result != null) {
+                onNavigateToHome()
+            } else {
+                _errorMessage.value = "Error de autenticación.Por favor, revisa tus credenciales."
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = "Correo o contraseña no válidos."
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Warning>
+  Authentication operations run on Dispatchers.IO to prevent blocking the main UI thread.
+</Warning>
+
+## State Management
+
+### StateFlow Properties
+
+The screen observes the following state flows:
+
+| State | Type | Purpose |
+|-------|------|----------|
+| `isLoading` | `StateFlow<Boolean>` | Controls progress indicator visibility |
+| `errorMessage` | `StateFlow<String>` | Stores validation or authentication error messages |
+
+### State Collection
+
+State is collected using Compose's `collectAsState()` extension:
+
+```kotlin
+val isLoading by loginScreenViewModel.isLoading.collectAsState()
+val errorMessage by loginScreenViewModel.errorMessage.collectAsState()
+```
+
+## Navigation
+
+### Navigation Actions
+
+The screen supports two navigation callbacks:
+
+<CodeGroup>
+```kotlin onNavigationToHome
+// Called after successful authentication
+onNavigationToHome: () -> Unit
+```
+
+```kotlin onNavigationToSignUp
+// Called when user clicks "Registrarse" link
+onNavigationToSignUp: () -> Unit
+```
+</CodeGroup>
+
+### Sign Up Link Implementation
+
+```kotlin
+Text(
+    text = "Registrarse",
+    modifier = Modifier
+        .clickable { onNavigationToSignUp() }
+        .align(Alignment.End)
+        .padding(end = 56.dp, top = 8.dp),
+    color = Color.White
+)
+```
+
+## Error Handling
+
+### Error Message Display
+
+Errors are displayed using Android Toast messages:
+
+```kotlin
+if (errorMessage.isNotEmpty()) {
+    Toast.makeText(LocalContext.current, errorMessage, Toast.LENGTH_LONG).show()
+    loginScreenViewModel.resetErrorMessage()
+}
+```
+
+### Error Types
+
+<AccordionGroup>
+  <Accordion title="Empty Fields Error">
+    **Message**: "Los campos no pueden estar vacios"
+    
+    Triggered when either email or password field is blank.
+  </Accordion>
+  
+  <Accordion title="Invalid Email Error">
+    **Message**: "El correo no es válido"
+    
+    Triggered when email format doesn't match standard pattern.
+  </Accordion>
+  
+  <Accordion title="Password Length Error">
+    **Message**: "La contraseña debe tener al menos 6 caracteres"
+    
+    Triggered when password is shorter than 6 characters.
+  </Accordion>
+  
+  <Accordion title="Authentication Error">
+    **Message**: "Correo o contraseña no válidos"
+    
+    Triggered when authentication fails with invalid credentials.
+  </Accordion>
+</AccordionGroup>
+
+## Dependencies
+
+### Injection & State
+
+```kotlin
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.runtime.collectAsState
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+```
+
+### Compose UI
+
+```kotlin
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.*
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/loginscreen/
+├── LoginScreen.kt
+└── LoginScreenViewModel.kt
+```
+
+<Check>
+  **Best Practice**: The screen follows MVVM architecture with clear separation between UI (LoginScreen.kt) and business logic (LoginScreenViewModel.kt).
+</Check>

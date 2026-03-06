@@ -1,0 +1,157 @@
+---
+title: 'NASA API Service'
+description: 'Retrofit interface for NASA Astronomy Picture of the Day (APOD) API'
+---
+
+## Overview
+
+The `NasaApiService` interface defines the network calls to NASA's APOD API using Retrofit. It provides three main endpoints for fetching astronomy images and their metadata.
+
+<Info>
+  Base URL: `https://api.nasa.gov/planetary/apod`
+</Info>
+
+## Interface Definition
+
+```kotlin
+package com.ccandeladev.nasaexplorer.data.api
+
+import retrofit2.http.GET
+import retrofit2.http.Query
+
+interface NasaApiService {
+    @GET("planetary/apod")
+    suspend fun getImageOfTheDay(
+        @Query("api_key") apiKey: String,
+        @Query("date") date: String? = null
+    ): NasaResponse
+
+    @GET("planetary/apod")
+    suspend fun getImagesInRange(
+        @Query("api_key") apiKey: String,
+        @Query("start_date") startDate: String,
+        @Query("end_date") endDate: String? = null
+    ): List<NasaResponse>
+
+    @GET("planetary/apod")
+    suspend fun getRandomImages(
+        @Query("api_key") apiKey: String,
+        @Query("count") count: Int,
+    ): List<NasaResponse>
+}
+```
+
+## API Methods
+
+### Get Image of the Day
+
+Retrieves the Astronomy Picture of the Day for a specific date or today's date.
+
+<ParamField path="apiKey" type="String" required>
+  NASA API key for authentication
+</ParamField>
+
+<ParamField path="date" type="String" optional>
+  Date in YYYY-MM-DD format. If not provided, returns today's image
+</ParamField>
+
+<ResponseField name="response" type="NasaResponse">
+  Single NASA image response with metadata including title, URL, date, and explanation
+</ResponseField>
+
+**Example Usage:**
+
+```kotlin
+val todayImage = nasaApiService.getImageOfTheDay(
+    apiKey = "YOUR_API_KEY"
+)
+
+val specificDate = nasaApiService.getImageOfTheDay(
+    apiKey = "YOUR_API_KEY",
+    date = "2024-01-15"
+)
+```
+
+### Get Images in Range
+
+Fetches multiple astronomy images within a date range.
+
+<ParamField path="apiKey" type="String" required>
+  NASA API key for authentication
+</ParamField>
+
+<ParamField path="startDate" type="String" required>
+  Start date in YYYY-MM-DD format
+</ParamField>
+
+<ParamField path="endDate" type="String" optional>
+  End date in YYYY-MM-DD format. If not provided, uses current date
+</ParamField>
+
+<ResponseField name="response" type="List<NasaResponse>">
+  List of NASA image responses for each day in the specified range
+</ResponseField>
+
+**Example Usage:**
+
+```kotlin
+val rangeImages = nasaApiService.getImagesInRange(
+    apiKey = "YOUR_API_KEY",
+    startDate = "2024-01-01",
+    endDate = "2024-01-07"
+)
+```
+
+<Warning>
+  Date ranges are limited to avoid excessive API calls. Consider pagination for large ranges.
+</Warning>
+
+### Get Random Images
+
+Retrrieves a specified number of random astronomy images.
+
+<ParamField path="apiKey" type="String" required>
+  NASA API key for authentication
+</ParamField>
+
+<ParamField path="count" type="Int" required>
+  Number of random images to retrieve (typically 1-100)
+</ParamField>
+
+<ResponseField name="response" type="List<NasaResponse>">
+  List of random NASA image responses
+</ResponseField>
+
+**Example Usage:**
+
+```kotlin
+val randomImages = nasaApiService.getRandomImages(
+    apiKey = "YOUR_API_KEY",
+    count = 10
+)
+```
+
+## Configuration
+
+This service interface is configured with Retrofit in the dependency injection module:
+
+```kotlin
+@Provides
+@Singleton
+fun provideNasaApiService(retrofit: Retrofit): NasaApiService {
+    return retrofit.create(NasaApiService::class.java)
+}
+```
+
+## Response Handling
+
+All methods are `suspend` functions designed for Kotlin Coroutines. They should be called from a coroutine scope or another suspend function.
+
+<Tip>
+  The API responses are mapped to domain models using the `toNasaModel()` extension function in the repository layer.
+</Tip>
+
+## Related Components
+
+- [NASA Repository](/components/repository) - Business logic layer using this service
+- [Data Models](/components/models) - Response and domain models

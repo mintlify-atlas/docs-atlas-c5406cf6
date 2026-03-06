@@ -1,0 +1,452 @@
+---
+title: 'Random Image Screen'
+description: 'Displays 5 random NASA astronomy images with favorites management'
+icon: 'shuffle'
+---
+
+## Overview
+
+The Random Image Screen fetches and displays 5 random NASA astronomy images from the APOD API. Each image includes its title, explanation, and the ability to save or remove it from favorites with individual favorite state tracking.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Random Images" icon="dice">
+    Fetches 5 random astronomy pictures from NASA's archive
+  </Card>
+  <Card title="Individual Favorites" icon="heart">
+    Track favorite status for each image independently
+  </Card>
+  <Card title="Lazy Loading" icon="arrow-down">
+    Scrollable list with efficient LazyColumn rendering
+  </Card>
+  <Card title="Expandable Descriptions" icon="arrows-up-down">
+    Collapsible text with toggle for full explanations
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### RandomImageScreen Composable
+
+```kotlin
+@Composable
+fun RandomImageScreen(randomImageViewModel: RandomImageViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) {
+        randomImageViewModel.loadRandomImages()
+    }
+
+    val randomImages by randomImageViewModel.randomImages.collectAsState()
+    val errorMessage by randomImageViewModel.errorMessage.collectAsState()
+    val isLoading by randomImageViewModel.isLoading.collectAsState()
+
+    Box(Modifier.fillMaxSize()) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            errorMessage != null -> {
+                Text(
+                    text = "$errorMessage",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                )
+            }
+            randomImages.isNotEmpty() -> {
+                LazyColumn {
+                    items(randomImages) { nasaModel ->
+                        ImageItem(
+                            nasaModel = nasaModel,
+                            randomImageViewModel = randomImageViewModel
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## ViewModel Implementation
+
+### RandomImageViewModel
+
+```kotlin
+@HiltViewModel
+class RandomImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _randomImages = MutableStateFlow<List<NasaModel>>(emptyList())
+    val randomImages: StateFlow<List<NasaModel>> = _randomImages
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val favoriteState: StateFlow<Map<String, Boolean>> = _favoriteStates
+}
+```
+
+### State Management
+
+| State | Type | Purpose |
+|-------|------|----------|
+| `randomImages` | `StateFlow<List<NasaModel>>` | List of random NASA images |
+| `errorMessage` | `StateFlow<String?>` | Network or loading error messages |
+| `isLoading` | `StateFlow<Boolean>` | Loading indicator state |
+| `favoriteStates` | `StateFlow<Map<String, Boolean>>` | Map of URL to favorite status |
+
+<Note>
+  Unlike the Daily Image Screen, this screen uses a **Map** to track favorite states for multiple images simultaneously.
+</Note>
+
+## Loading Random Images
+
+### loadRandomImages Function
+
+```kotlin
+fun loadRandomImages(count: Int = 5) {
+    viewModelScope.launch {
+        _isLoading.value = true
+
+        try {
+            val results = nasaRepository.getRandomImages(count = count)
+            _randomImages.value = results
+            _errorMessage.value = null
+            checkFavorites(results.map { it.url })
+        } catch (e: Exception) {
+            _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _randomImages.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Info>
+  The function accepts a `count` parameter (default: 5) to specify how many random images to fetch.
+</Info>
+
+## Image Item Component
+
+### ImageItem Composable
+
+```kotlin
+@Composable
+fun ImageItem(nasaModel: NasaModel, randomImageViewModel: RandomImageViewModel) {
+    val favoriteState by randomImageViewModel.favoriteState.collectAsState()
+    val isFavorite = favoriteState[nasaModel.url] ?: false
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+    ) {
+        Text(
+            text = nasaModel.title,
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(nasaModel.url)
+                .crossfade(1000).build(),
+            contentDescription = nasaModel.title,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp)
+                .padding(top = 24.dp)
+                .clip(RoundedCornerShape(16.dp)),
+            contentScale = ContentScale.Crop,
+            placeholder = painterResource(id = R.drawable.placeholder),
+            error = painterResource(id = R.drawable.placeholder)
+        )
+        
+        // Favorite button and description
+    }
+    
+    HorizontalDivider(
+        modifier = Modifier.padding(top = 16.dp, bottom = 16.dp),
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
+    )
+}
+```
+
+## Favorites Management
+
+### Save to Favorites
+
+```kotlin
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = true
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Remove from Favorites
+
+```kotlin
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = false
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al borrar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Check Multiple Favorites
+
+```kotlin
+private fun checkFavorites(urls: List<String>) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef.get().await()
+                val currentState = _favoriteStates.value.toMutableMap()
+
+                for (url in urls) {
+                    currentState[url] = snapshot.children.any { 
+                        it.child("url").value == url 
+                    }
+                }
+                
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+<Warning>
+  The `checkFavorites` function iterates through all URLs to build a complete state map for efficient UI updates.
+</Warning>
+
+## Favorite Button Implementation
+
+### Toggle Logic
+
+```kotlin
+IconButton(onClick = {
+    if (isFavorite) {
+        randomImageViewModel.removeFromFavorites(nasaModel = nasaModel)
+    } else {
+        randomImageViewModel.saveToFavorites(nasaModel = nasaModel)
+    }
+}) {
+    Icon(
+        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+        contentDescription = "Favorites border",
+        tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+    )
+}
+```
+
+### Favorite State Lookup
+
+```kotlin
+val favoriteState by randomImageViewModel.favoriteState.collectAsState()
+val isFavorite = favoriteState[nasaModel.url] ?: false
+```
+
+<Info>
+  The `?: false` provides a default value when the URL isn't found in the favorites map.
+</Info>
+
+## Expandable Description
+
+### Implementation
+
+```kotlin
+var isExpanded by remember { mutableStateOf(false) }
+
+Card(
+    modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 8.dp)
+        .clickable { isExpanded = !isExpanded },
+    shape = MaterialTheme.shapes.medium,
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    elevation = CardDefaults.cardElevation(4.dp),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+) {
+    Column(Modifier.padding(8.dp)) {
+        Text(
+            text = nasaModel.explanation,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (isExpanded) Int.MAX_VALUE else 3,
+            textAlign = TextAlign.Justify,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text(
+            text = if (isExpanded) "ver menos" else "ver más",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+```
+
+## Item Separator
+
+Each image item is separated by a horizontal divider:
+
+```kotlin
+HorizontalDivider(
+    modifier = Modifier.padding(top = 16.dp, bottom = 16.dp),
+    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f)
+)
+```
+
+## LazyColumn Implementation
+
+### Efficient List Rendering
+
+```kotlin
+LazyColumn(
+    Modifier
+        .fillMaxSize()
+        .background(MaterialTheme.colorScheme.background)
+        .padding(top = 16.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.Center
+) {
+    items(randomImages) { nasaModel ->
+        ImageItem(
+            nasaModel = nasaModel,
+            randomImageViewModel = randomImageViewModel
+        )
+    }
+}
+```
+
+<Check>
+  **Performance**: LazyColumn only composes visible items, making it efficient for scrolling through multiple images.
+</Check>
+
+## Error Handling
+
+### Network Errors
+
+```kotlin
+catch (e: Exception) {
+    _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+    _randomImages.value = emptyList()
+}
+```
+
+### Empty State
+
+```kotlin
+else -> {
+    Text(
+        text = "No hay imágenes disponibles",
+        textAlign = TextAlign.Center,
+        modifier = Modifier.align(Alignment.Center)
+    )
+}
+```
+
+## Dependencies
+
+### Firebase
+
+```kotlin
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.tasks.await
+```
+
+### Lazy Lists
+
+```kotlin
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+```
+
+### Coil
+
+```kotlin
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/
+├── RandomImageScreen.kt
+└── RandomImageViewModel.kt
+```
+
+<Check>
+  **Best Practice**: The screen uses a Map-based state approach for tracking multiple favorite states efficiently.
+</Check>

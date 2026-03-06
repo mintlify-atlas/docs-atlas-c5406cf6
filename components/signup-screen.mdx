@@ -1,0 +1,367 @@
+---
+title: 'Signup Screen'
+description: 'User registration screen with email validation and Firebase authentication'
+icon: 'user-plus'
+---
+
+## Overview
+
+The Signup Screen provides a user registration interface for creating new accounts in the NASA Explorer application. It features email and password validation, Firebase authentication integration, and comprehensive error handling for duplicate accounts.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Account Creation" icon="user-plus">
+    Creates new user accounts using Firebase Authentication
+  </Card>
+  <Card title="Duplicate Detection" icon="shield">
+    Detects and prevents registration with existing email addresses
+  </Card>
+  <Card title="Input Validation" icon="check">
+    Validates email format and password strength requirements
+  </Card>
+  <Card title="Loading States" icon="spinner">
+    Shows progress indicators during registration process
+  </Card>
+</CardGroup>
+
+## Screen Components
+
+### Main UI Elements
+
+The signup screen consists of:
+
+- **Title**: "Registro nuevo usuario" header text in white
+- **Email TextField**: Outlined input field for email address
+- **Password TextField**: Outlined secure input field for password
+- **Register Button**: Full-width button at the bottom to submit registration
+- **Progress Indicator**: Circular loading indicator during registration
+
+<Note>
+  The screen uses a black background with white text styling for consistency with the app theme.
+</Note>
+
+## Architecture
+
+### SignUpScreen Composable
+
+```kotlin
+@Composable
+fun SignUpScreen(
+    signUpViewModel: SignUpViewModel = hiltViewModel(),
+    onNavigateToHome: () -> Unit
+) {
+    val isLoading by signUpViewModel.isLoading.collectAsState()
+    val errorMessage by signUpViewModel.errorMessage.collectAsState()
+
+    if (errorMessage.isNotEmpty()) {
+        Toast.makeText(LocalContext.current, errorMessage, Toast.LENGTH_LONG).show()
+        signUpViewModel.resetErrorMessage()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        // UI components
+    }
+}
+```
+
+### Layout Structure
+
+The screen uses a `Box` layout with centered column content:
+
+```kotlin
+Column(
+    Modifier
+        .fillMaxWidth()
+        .align(Alignment.Center),
+    horizontalAlignment = Alignment.CenterHorizontally
+) {
+    Text(text = "Registro nuevo usuario", style = TextStyle(color = Color.White))
+    // Email and password fields
+}
+
+Button(
+    onClick = { /* Registration logic */ },
+    modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.BottomCenter)
+        .padding(26.dp)
+) {
+    Text(text = "Registrarse")
+}
+```
+
+## ViewModel Implementation
+
+### SignUpViewModel
+
+Manages registration state and Firebase authentication:
+
+```kotlin
+@HiltViewModel
+class SignUpViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+
+    fun register(email: String, password: String, onNavigateToHome: () -> Unit) {
+        // Registration logic
+    }
+}
+```
+
+## Registration Flow
+
+### Validation Steps
+
+<Steps>
+  <Step title="Empty Field Validation">
+    Checks that both email and password are provided
+    ```kotlin
+    if (email.isBlank() || password.isBlank()) {
+        _errorMessage.value = "Los campos no pueden estar vacios"
+        return
+    }
+    ```
+  </Step>
+  
+  <Step title="Email Format Validation">
+    Validates email using Android's pattern matcher
+    ```kotlin
+    private fun isValidEmail(email: String): Boolean {
+        return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
+    }
+    ```
+  </Step>
+  
+  <Step title="Password Length Validation">
+    Ensures password meets minimum 6 character requirement
+    ```kotlin
+    if (password.length < 6) {
+        _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+        return
+    }
+    ```
+  </Step>
+  
+  <Step title="Firebase Registration">
+    Creates user account via AuthService
+    ```kotlin
+    val result = withContext(Dispatchers.IO) {
+        authService.register(email = email, password = password)
+    }
+    ```
+  </Step>
+</Steps>
+
+### Complete Registration Function
+
+```kotlin
+fun register(email: String, password: String, onNavigateToHome: () -> Unit) {
+    viewModelScope.launch {
+        _isLoading.value = true
+
+        try {
+            val result = withContext(Dispatchers.IO) {
+                authService.register(email = email, password = password)
+            }
+            
+            if (result != null) {
+                onNavigateToHome()
+            } else {
+                _errorMessage.value = "Error de autenticación.Revisa tus credenciales."
+            }
+        } catch (e: FirebaseAuthUserCollisionException) {
+            _errorMessage.value = "El correo ya está en uso."
+        } catch (e: Exception) {
+            _errorMessage.value = "Se produjo un error durante el registro"
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Warning>
+  Registration operations use `Dispatchers.IO` to avoid blocking the main thread during network calls.
+</Warning>
+
+## Error Handling
+
+### Firebase-Specific Errors
+
+The screen handles Firebase authentication exceptions:
+
+<AccordionGroup>
+  <Accordion title="FirebaseAuthUserCollisionException">
+    **Error**: Account already exists
+    
+    **Message**: "El correo ya está en uso."
+    
+    Triggered when attempting to register with an email that already has an account.
+    
+    ```kotlin
+    catch (e: FirebaseAuthUserCollisionException) {
+        _errorMessage.value = "El correo ya está en uso."
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Generic Registration Errors">
+    **Error**: Unknown registration failure
+    
+    **Message**: "Se produjo un error durante el registro"
+    
+    Catches all other exceptions during registration process.
+    
+    ```kotlin
+    catch (e: Exception) {
+        _errorMessage.value = "Se produjo un error durante el registro"
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Validation Errors
+
+| Error Type | Message | Trigger Condition |
+|------------|---------|-------------------|
+| Empty Fields | "Los campos no pueden estar vacios" | Email or password is blank |
+| Invalid Email | "El correo no es válido" | Email format doesn't match pattern |
+| Short Password | "La contraseña debe tener al menos 6 caracteres" | Password length < 6 |
+
+## State Management
+
+### Observable State
+
+The screen observes two state flows:
+
+```kotlin
+val isLoading by signUpViewModel.isLoading.collectAsState()
+val errorMessage by signUpViewModel.errorMessage.collectAsState()
+```
+
+### Loading State UI
+
+Conditionally displays progress indicator:
+
+```kotlin
+if (isLoading) {
+    CircularProgressIndicator(modifier = Modifier.padding(top = 56.dp))
+}
+```
+
+## Navigation
+
+### Success Navigation
+
+After successful registration, users are automatically navigated to the home screen:
+
+```kotlin
+if (result != null) {
+    onNavigateToHome()
+}
+```
+
+## Input Fields
+
+### Email TextField
+
+```kotlin
+OutlinedTextField(
+    value = email,
+    onValueChange = { email = it },
+    modifier = Modifier.padding(24.dp),
+    label = { Text(text = "Correo", color = Color.White) },
+    textStyle = TextStyle(Color.White)
+)
+```
+
+### Password TextField
+
+```kotlin
+OutlinedTextField(
+    value = password,
+    onValueChange = { password = it },
+    modifier = Modifier.padding(top = 24.dp),
+    label = { Text(text = "Contraseña", color = Color.White) },
+    textStyle = TextStyle(Color.White)
+)
+```
+
+<Info>
+  Both text fields use remember state for local value management:
+  ```kotlin
+  var email by remember { mutableStateOf("") }
+  var password by remember { mutableStateOf("") }
+  ```
+</Info>
+
+## Register Button
+
+The registration button is positioned at the bottom of the screen:
+
+```kotlin
+Button(
+    onClick = {
+        signUpViewModel.register(
+            email = email,
+            password = password,
+            onNavigateToHome = onNavigateToHome
+        )
+    },
+    modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.BottomCenter)
+        .padding(26.dp)
+) {
+    Text(text = "Registrarse")
+}
+```
+
+## Dependencies
+
+### Firebase Authentication
+
+```kotlin
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+```
+
+### Hilt Dependency Injection
+
+```kotlin
+import androidx.hilt.navigation.compose.hiltViewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+```
+
+### Coroutines
+
+```kotlin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/signupscreen/
+├── SignupScreen.kt
+└── SignUpViewModel.kt
+```
+
+<Check>
+  **Security**: Password validation and Firebase authentication ensure secure account creation.
+</Check>

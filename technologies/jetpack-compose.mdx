@@ -1,0 +1,359 @@
+---
+title: "Jetpack Compose"
+description: "Modern declarative UI toolkit for building native Android interfaces"
+icon: "palette"
+---
+
+## Overview
+
+NASA Explorer uses **Jetpack Compose** as its UI toolkit, embracing a fully declarative approach to building Android user interfaces. Compose eliminates the need for XML layouts and provides a modern, reactive way to create beautiful and responsive UIs.
+
+<Info>
+Jetpack Compose is Android's modern toolkit for building native UI. It simplifies and accelerates UI development with less code, powerful tools, and intuitive Kotlin APIs.
+</Info>
+
+## Key Features in NASA Explorer
+
+<CardGroup cols={2}>
+  <Card title="Declarative UI" icon="code">
+    Define UI components as functions that describe how the UI should look based on the current state
+  </Card>
+  <Card title="Material Design 3" icon="paintbrush">
+    Leverage Material 3 components for a modern, consistent design system
+  </Card>
+  <Card title="Navigation" icon="route">
+    Type-safe navigation with Compose Navigation and Kotlinx Serialization
+  </Card>
+  <Card title="State Management" icon="database">
+    Reactive state management with StateFlow and ViewModel integration
+  </Card>
+</CardGroup>
+
+## Configuration
+
+Jetpack Compose is configured in the `build.gradle.kts` file:
+
+```kotlin build.gradle.kts
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    alias(libs.plugins.compose.compiler)  // Compiler for Kotlin 2.0.0
+}
+
+android {
+    buildFeatures {
+        compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.1"
+    }
+}
+
+dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
+}
+```
+
+## MainActivity with Compose
+
+The app's entry point sets up Compose with Material 3 theming:
+
+```kotlin MainActivity.kt
+package com.ccandeladev.nasaexplorer
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.ui.Modifier
+import androidx.navigation.compose.rememberNavController
+import com.ccandeladev.nasaexplorer.ui.core.NasaExplorerNav
+import com.ccandeladev.nasaexplorer.ui.theme.NASAExplorerTheme
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            NASAExplorerTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    val navController = rememberNavController()
+                    NasaExplorerNav(navHostController = navController)
+                }
+            }
+        }
+    }
+}
+```
+
+<Note>
+Notice how `setContent` replaces traditional `setContentView()` - this is the Compose way of defining UI.
+</Note>
+
+## Building Screens with Compose
+
+### Navigation Bar Example
+
+The home screen implements a Material 3 bottom navigation bar:
+
+```kotlin HomeScreen.kt
+@Composable
+fun HomeBottomBar(navController: NavController) {
+    var selectedItem by remember { mutableIntStateOf(-1) }
+
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+    ) {
+        NavigationBarItem(
+            selected = selectedItem == 1,
+            onClick = {
+                if (selectedItem != 1) {
+                    selectedItem = 1
+                    navController.navigate(Routes.DailyImage) {
+                        popUpTo<Routes.Home> { inclusive = false }
+                    }
+                }
+            },
+            icon = {
+                Icon(
+                    imageVector = Icons.Filled.Today,
+                    contentDescription = "Daily Image",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            },
+            label = { Text(text = "Diaria") },
+            colors = NavigationBarItemDefaults.colors(
+                indicatorColor = MaterialTheme.colorScheme.secondary,
+                selectedIconColor = MaterialTheme.colorScheme.onSecondary,
+                selectedTextColor = MaterialTheme.colorScheme.onSecondary
+            )
+        )
+    }
+}
+```
+
+### Layout Composition
+
+Compose uses layout composables to structure UI elements:
+
+```kotlin HomeScreen.kt
+@Composable
+fun HomeScreenContent() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.fondo),
+            contentDescription = "Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        Column(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 24.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.imagen1),
+                    contentDescription = "Image 1",
+                    modifier = Modifier
+                        .size(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(16.dp)
+                        ),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+    }
+}
+```
+
+## Material Design 3 Theme
+
+Custom Material 3 theme with dark color scheme:
+
+```kotlin Theme.kt
+private val DarkColorScheme = darkColorScheme(
+    primary = Color(0xFF919CCA),      // Space blue
+    secondary = Color(0xFFB4ACAC),    // Light gray contrast
+    tertiary = Color(0XFFFFD740),     // Stellar yellow
+    background = Color(0xFF13131B),   // Deep space black
+    surface = Color(0xFF222430),      // Dark surface
+    onPrimary = Color(0xFF042042),    // Text on primary
+    onSecondary = Color.Black,        // Text on secondary
+    onBackground = Color.White
+)
+
+@Composable
+fun NASAExplorerTheme(
+    darkTheme: Boolean = true,
+    dynamicColor: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    val colorScheme = when {
+        darkTheme -> DarkColorScheme
+        else -> DarkColorScheme
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography,
+        content = content
+    )
+}
+```
+
+## State Management
+
+Compose integrates seamlessly with ViewModels and StateFlow:
+
+```kotlin DailyImageScreen.kt
+@Composable
+fun DailyImageScreen(dailyImageViewModel: DailyImageViewModel = hiltViewModel()) {
+    // Trigger data loading when screen first composes
+    LaunchedEffect(Unit) {
+        dailyImageViewModel.loadDailyImage()
+    }
+
+    // Subscribe to ViewModel state changes
+    val dailyImage by dailyImageViewModel.dailyImage.collectAsState()
+    val errorMessage by dailyImageViewModel.errorMessage.collectAsState()
+    val isLoading by dailyImageViewModel.isLoading.collectAsState()
+
+    Box(Modifier.fillMaxSize()) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            errorMessage != null -> {
+                Text(
+                    text = "$errorMessage",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(24.dp)
+                )
+            }
+            dailyImage != null -> {
+                LazyColumn(
+                    Modifier
+                        .fillMaxSize()
+                        .background(color = MaterialTheme.colorScheme.background)
+                        .padding(top = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    item {
+                        dailyImage?.let { nasaModel ->
+                            dailyImageViewModel.checkIsFavorite(nasaModel.url)
+                            ImageItem(
+                                nasaModel = nasaModel,
+                                dailyImageViewModel = dailyImageViewModel
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Image Loading with Coil
+
+Compose integration with Coil for async image loading:
+
+```kotlin DailyImageScreen.kt
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(nasaModel.url)
+        .crossfade(1000)
+        .build(),
+    contentDescription = nasaModel.title,
+    modifier = Modifier
+        .fillMaxWidth()
+        .height(300.dp)
+        .padding(top = 24.dp)
+        .clip(RoundedCornerShape(16.dp))
+        .clickable { },
+    contentScale = ContentScale.Crop,
+    placeholder = painterResource(id = R.drawable.placeholder),
+    error = painterResource(id = R.drawable.placeholder)
+)
+```
+
+## Benefits in NASA Explorer
+
+<AccordionGroup>
+  <Accordion title="Less Boilerplate Code">
+    Compose eliminates the need for findViewById, XML layouts, and view binding. UI components are defined as simple Kotlin functions.
+  </Accordion>
+  
+  <Accordion title="Reactive UI">
+    The UI automatically updates when state changes, eliminating manual view updates and reducing bugs.
+  </Accordion>
+  
+  <Accordion title="Type Safety">
+    Kotlin's type system catches UI errors at compile time rather than runtime.
+  </Accordion>
+  
+  <Accordion title="Better Testing">
+    Compose UI components can be tested in isolation without requiring Android framework dependencies.
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<Steps>
+  <Step title="Keep Composables Pure">
+    Composables should be side-effect free. Use `LaunchedEffect` for side effects like network calls.
+  </Step>
+  
+  <Step title="Hoist State">
+    Move state up to the appropriate level to make composables reusable and testable.
+  </Step>
+  
+  <Step title="Use remember Wisely">
+    Use `remember` to preserve state across recompositions, but be mindful of memory leaks.
+  </Step>
+  
+  <Step title="Leverage Material 3">
+    Use Material 3 components for consistent design and accessibility out of the box.
+  </Step>
+</Steps>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Jetpack Compose Docs" icon="book" href="https://developer.android.com/jetpack/compose">
+    Official Android documentation for Jetpack Compose
+  </Card>
+  <Card title="Material Design 3" icon="palette" href="https://m3.material.io/">
+    Material Design 3 guidelines and components
+  </Card>
+  <Card title="Compose Samples" icon="code" href="https://github.com/android/compose-samples">
+    Official Google samples showcasing Compose capabilities
+  </Card>
+  <Card title="Compose Pathways" icon="graduation-cap" href="https://developer.android.com/courses/pathways/compose">
+    Learn Compose through Google's guided pathways
+  </Card>
+</CardGroup>

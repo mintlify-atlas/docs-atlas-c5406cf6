@@ -1,0 +1,540 @@
+---
+title: 'Favorites Screen'
+description: 'Display and manage saved favorite NASA images with comments'
+icon: 'heart'
+---
+
+## Overview
+
+The Favorites Screen displays all NASA images saved by the user to their Firebase favorites collection. Users can view their saved images, add personal comments to each image, and remove items from their favorites with smooth fade-out animations.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Firebase Integration" icon="database">
+    Loads favorites from Firebase Realtime Database
+  </Card>
+  <Card title="Personal Comments" icon="comment">
+    Add and persist comments for each favorite image
+  </Card>
+  <Card title="Remove Favorites" icon="trash">
+    Delete favorites with fade-out animation effects
+  </Card>
+  <Card title="Empty State" icon="inbox">
+    Displays helpful message when no favorites exist
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### FavoritesScreen Composable
+
+```kotlin
+@Composable
+fun FavoritesScreen(favoritesViewModel: FavoritesViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) {
+        favoritesViewModel.loadFavoriteImages()
+    }
+
+    val favoriteImages by favoritesViewModel.favoriteImages.collectAsState()
+    val errorMessage by favoritesViewModel.errorMessage.collectAsState()
+    val isLoading by favoritesViewModel.isLoading.collectAsState()
+
+    Box(Modifier.fillMaxSize()) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+            errorMessage.isNotEmpty() -> {
+                Text(
+                    text = errorMessage,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+            }
+            favoriteImages.isEmpty() -> {
+                Text(
+                    text = "No hay favoritos guardados",
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+            else -> {
+                LazyColumn {
+                    items(favoriteImages) { favoriteNasaModel ->
+                        ImageItem(
+                            favoriteNasaModel = favoriteNasaModel,
+                            favoritesViewModel = favoritesViewModel
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+## Data Model
+
+### FavoriteNasaModel
+
+The screen uses a specialized model for favorite images:
+
+```kotlin
+data class FavoriteNasaModel(
+    val firebaseImageId: String,  // Unique Firebase-generated ID
+    val title: String,
+    val url: String
+)
+```
+
+<Note>
+  The `firebaseImageId` is crucial for managing comments and deletions in Firebase.
+</Note>
+
+## ViewModel Implementation
+
+### FavoritesViewModel
+
+```kotlin
+@HiltViewModel
+class FavoritesViewModel @Inject constructor(
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _favoriteImages = MutableStateFlow<List<FavoriteNasaModel>>(emptyList())
+    val favoriteImages: StateFlow<List<FavoriteNasaModel>> = _favoriteImages
+
+    private val _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+
+    private val _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _comments = MutableStateFlow<Map<String, String>>(emptyMap())
+    val comments: StateFlow<Map<String, String>> = _comments
+}
+```
+
+### State Management
+
+| State | Type | Purpose |
+|-------|------|----------|
+| `favoriteImages` | `StateFlow<List<FavoriteNasaModel>>` | List of user's favorite images |
+| `errorMessage` | `StateFlow<String>` | Error messages for loading or operations |
+| `isLoading` | `StateFlow<Boolean>` | Loading indicator state |
+| `comments` | `StateFlow<Map<String, String>>` | Map of image ID to comment text |
+
+## Loading Favorites
+
+### loadFavoriteImages Function
+
+```kotlin
+fun loadFavoriteImages() {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef.get().await()
+
+                val favoriteList = snapshot.children.mapNotNull { child ->
+                    val firebaseImageId = child.key ?: return@mapNotNull null
+                    val title = child.child("title").getValue(String::class.java)
+                    val url = child.child("url").getValue(String::class.java)
+
+                    if (title != null && url != null) {
+                        FavoriteNasaModel(
+                            firebaseImageId = firebaseImageId,
+                            title = title,
+                            url = url
+                        )
+                    } else null
+                }
+                
+                if (favoriteList.isEmpty()) {
+                    _errorMessage.value = "No tienes imágenes favoritas"
+                }
+                
+                _favoriteImages.value = favoriteList
+                loadComments()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al mostrar la lista de favoritos"
+                _favoriteImages.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<Info>
+  Favorites are stored under `favorites/{userId}/{firebaseImageId}` in Firebase Realtime Database.
+</Info>
+
+## Comments System
+
+### Load Comments
+
+```kotlin
+private fun loadComments() {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val commentsRef = firebaseDatabase.reference
+                    .child("comments")
+                    .child(userId)
+                
+                val snapshot = commentsRef.get().await()
+                
+                val commentsMap = snapshot.children.associate { child ->
+                    val favoriteImageId = child.key ?: ""
+                    val comment = child.getValue(String::class.java) ?: ""
+                    favoriteImageId to comment
+                }
+                
+                _comments.value = commentsMap
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar comentario: ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Add Comment
+
+```kotlin
+fun addComment(firebaseImageId: String, comment: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val commentsRef = firebaseDatabase.reference
+                    .child("comments")
+                    .child(userId)
+                
+                commentsRef.child(firebaseImageId).setValue(comment).await()
+
+                val currentComment = _comments.value.toMutableMap()
+                currentComment[firebaseImageId] = comment
+                _comments.value = currentComment
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar el comentario: ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<Warning>
+  Comments are stored separately under `comments/{userId}/{firebaseImageId}` to keep data normalized.
+</Warning>
+
+## Image Item Component
+
+### ImageItem with Comment UI
+
+```kotlin
+@Composable
+fun ImageItem(favoriteNasaModel: FavoriteNasaModel, favoritesViewModel: FavoritesViewModel) {
+    var isVisible by remember { mutableStateOf(true) }
+    val comments by favoritesViewModel.comments.collectAsState()
+    val commentText = comments[favoriteNasaModel.firebaseImageId]
+    var tempComment by rememberSaveable { mutableStateOf("") }
+
+    AnimatedVisibility(
+        visible = isVisible,
+        enter = fadeIn(animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing)),
+        exit = fadeOut(animationSpec = tween(durationMillis = 1500, easing = FastOutSlowInEasing))
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            // Title and image
+            
+            // Comment UI
+            if (!commentText.isNullOrEmpty()) {
+                Text(
+                    text = commentText,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Justify,
+                    modifier = Modifier.padding(top = 4.dp),
+                    color = Color.Gray
+                )
+            } else {
+                OutlinedTextField(
+                    value = tempComment,
+                    onValueChange = {
+                        val maxComment = 100
+                        if (it.length <= maxComment) {
+                            tempComment = it
+                        }
+                    },
+                    label = { Text(text = "Tu Comentario") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = false,
+                    maxLines = 3,
+                    trailingIcon = {
+                        if (tempComment.isNotEmpty()) {
+                            IconButton(onClick = {
+                                favoritesViewModel.addComment(
+                                    favoriteNasaModel.firebaseImageId,
+                                    tempComment.trim()
+                                )
+                                tempComment = ""
+                            }) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Enviar comentario",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+            
+            // Remove favorite button
+        }
+    }
+}
+```
+
+### Comment TextField Features
+
+<AccordionGroup>
+  <Accordion title="Character Limit">
+    Comments are limited to 100 characters:
+    ```kotlin
+    val maxComment = 100
+    if (it.length <= maxComment) {
+        tempComment = it
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Multi-line Input">
+    TextField supports up to 3 lines:
+    ```kotlin
+    singleLine = false,
+    maxLines = 3
+    ```
+  </Accordion>
+  
+  <Accordion title="Send Button">
+    Trailing icon appears when text is entered:
+    ```kotlin
+    if (tempComment.isNotEmpty()) {
+        IconButton(onClick = { /* Send comment */ }) {
+            Icon(imageVector = Icons.AutoMirrored.Filled.Send)
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Remove Favorite
+
+### removeFromFavorites Function
+
+```kotlin
+fun removeFromFavorites(favoriteNasaModel: FavoriteNasaModel, onRemoved: () -> Unit) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("id")
+                    .equalTo(favoriteNasaModel.firebaseImageId)
+                    .get()
+                    .await()
+
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+
+                // Delete associated comment
+                val commentRef = firebaseDatabase.reference
+                    .child("comments")
+                    .child(userId)
+                
+                commentRef.child(favoriteNasaModel.firebaseImageId).removeValue().await()
+
+                onRemoved()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al eliminar favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Remove Button with Animation
+
+```kotlin
+var isVisible by remember { mutableStateOf(true) }
+
+IconButton(
+    onClick = {
+        isVisible = false  // Trigger fade-out animation
+        
+        favoritesViewModel.removeFromFavorites(favoriteNasaModel = favoriteNasaModel) {
+            favoritesViewModel.loadFavoriteImages()
+        }
+    }
+) {
+    Icon(
+        imageVector = Icons.Default.Favorite,
+        contentDescription = "Favorites",
+        tint = MaterialTheme.colorScheme.primary
+    )
+}
+```
+
+<Check>
+  **Smooth UX**: Setting `isVisible = false` triggers the fade-out animation before removal.
+</Check>
+
+## Animations
+
+### AnimatedVisibility Implementation
+
+```kotlin
+AnimatedVisibility(
+    visible = isVisible,
+    enter = fadeIn(
+        animationSpec = tween(
+            durationMillis = 1500,
+            easing = FastOutSlowInEasing
+        )
+    ),
+    exit = fadeOut(
+        animationSpec = tween(
+            durationMillis = 1500,
+            easing = FastOutSlowInEasing
+        )
+    )
+) {
+    // Image content
+}
+```
+
+### Animation Timing
+
+- **Duration**: 1500ms for both enter and exit
+- **Easing**: FastOutSlowInEasing for smooth transitions
+- **Trigger**: `isVisible` state change
+
+## Image Display
+
+### AsyncImage with Coil
+
+```kotlin
+AsyncImage(
+    model = ImageRequest.Builder(LocalContext.current)
+        .data(favoriteNasaModel.url)
+        .crossfade(1000).build(),
+    contentDescription = favoriteNasaModel.title,
+    modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 24.dp)
+        .clip(RoundedCornerShape(16.dp))
+        .height(300.dp)
+        .width(300.dp),
+    contentScale = ContentScale.Crop,
+    placeholder = painterResource(id = R.drawable.placeholder),
+    error = painterResource(id = R.drawable.placeholder)
+)
+```
+
+## Firebase Database Structure
+
+### Data Organization
+
+```json
+{
+  "favorites": {
+    "{userId}": {
+      "{firebaseImageId}": {
+        "id": "{firebaseImageId}",
+        "title": "Image Title",
+        "url": "https://..."
+      }
+    }
+  },
+  "comments": {
+    "{userId}": {
+      "{firebaseImageId}": "User's comment text"
+    }
+  }
+}
+```
+
+<Info>
+  Separating comments from favorites allows for independent querying and updates.
+</Info>
+
+## Dependencies
+
+### Firebase
+
+```kotlin
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.tasks.await
+```
+
+### Animation
+
+```kotlin
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+```
+
+### State Preservation
+
+```kotlin
+import androidx.compose.runtime.saveable.rememberSaveable
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/favoritesscreen/
+├── FavoritesScreen.kt
+└── FavoritesViewModel.kt
+```
+
+<Check>
+  **Best Practice**: Comments are loaded after favorites to ensure all image IDs are available for mapping.
+</Check>

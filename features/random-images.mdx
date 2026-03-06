@@ -1,0 +1,387 @@
+---
+title: 'Random Images'
+description: 'Discover random astronomy pictures from NASA APOD archive'
+icon: 'shuffle'
+---
+
+## Overview
+
+The Random Images feature allows users to explore NASA's vast Astronomy Picture of the Day archive by fetching multiple random images at once. This provides a serendipitous way to discover astronomical wonders from any point in APOD history.
+
+## User Experience
+
+<Steps>
+  <Step title="Load Random Images">
+    The screen fetches 5 random images from NASA's APOD archive when launched.
+  </Step>
+  
+  <Step title="Browse Collection">
+    Scroll through the random selection, each displaying its title, date, and full explanation.
+  </Step>
+  
+  <Step title="Manage Favorites">
+    Each image has a favorite icon that reflects its saved state. Tap to add or remove from favorites.
+  </Step>
+  
+  <Step title="Refresh for More">
+    Load a new set of random images to continue exploring.
+  </Step>
+</Steps>
+
+<Info>
+  By default, the feature loads 5 random images per request, but this count is configurable.
+</Info>
+
+## API Integration
+
+### NASA API Endpoint
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaApiService.kt
+interface NasaApiService {
+
+    @GET("planetary/apod")
+    suspend fun getRandomImages(
+        @Query("api_key") apiKey: String,
+        @Query("count") count: Int,
+    ): List<NasaResponse>
+}
+```
+
+**Parameters:**
+- `api_key`: NASA API authentication key
+- `count`: Number of random images to fetch (typically 5)
+
+**Returns:** List of `NasaResponse` objects with random images from the APOD archive.
+
+### Repository Implementation
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaRepository.kt
+class NasaRepository @Inject constructor(private val nasaApiService: NasaApiService) {
+
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getRandomImages(count: Int): List<NasaModel> {
+        val response = nasaApiService.getRandomImages(apiKey = API_KEY, count = count)
+        return response.map { it.toNasaModel() }
+    }
+}
+```
+
+<Note>
+  The repository automatically transforms each `NasaResponse` into a `NasaModel` for UI consumption.
+</Note>
+
+## ViewModel Architecture
+
+### RandomImageViewModel
+
+Manages state and business logic for random images:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/RandomImageViewModel.kt
+@HiltViewModel
+class RandomImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _randomImages = MutableStateFlow<List<NasaModel>>(emptyList())
+    val randomImages: StateFlow<List<NasaModel>> = _randomImages
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val favoriteState: StateFlow<Map<String, Boolean>> = _favoriteStates
+
+    fun loadRandomImages(count: Int = 5) {
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            try {
+                val results = nasaRepository.getRandomImages(count = count)
+                _randomImages.value = results
+                _errorMessage.value = null
+                checkFavorites(results.map { it.url })
+            } catch (e: Exception) {
+                _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+                _randomImages.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+### State Management
+
+The ViewModel exposes four reactive states:
+
+<CardGroup cols={2}>
+  <Card title="randomImages" icon="images">
+    List of `NasaModel` objects representing the fetched random images.
+  </Card>
+  
+  <Card title="isLoading" icon="spinner">
+    Boolean indicating whether images are currently being fetched.
+  </Card>
+  
+  <Card title="errorMessage" icon="circle-exclamation">
+    Error message string for network or API failures.
+  </Card>
+  
+  <Card title="favoriteStates" icon="star">
+    Map of URL to Boolean, tracking favorite status for each image.
+  </Card>
+</CardGroup>
+
+## Favorites Management
+
+### Tracking Multiple Favorites
+
+Unlike the daily image screen, random images require tracking multiple favorite states simultaneously:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/RandomImageViewModel.kt
+private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+val favoriteState: StateFlow<Map<String, Boolean>> = _favoriteStates
+```
+
+The map uses image URLs as keys and boolean values to indicate favorite status.
+
+### Save to Favorites
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/RandomImageViewModel.kt
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = true
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Remove from Favorites
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/RandomImageViewModel.kt
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = false
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al borrar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Check Favorites Status
+
+Automatically checks which images are already favorited:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/randomimagescreen/RandomImageViewModel.kt
+private fun checkFavorites(urls: List<String>) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef.get().await()
+                val currentState = _favoriteStates.value.toMutableMap()
+
+                for (url in urls) {
+                    currentState[url] = snapshot.children.any { 
+                        it.child("url").value == url 
+                    }
+                }
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+<Tip>
+  The `checkFavorites()` function is automatically called after images load, ensuring favorite icons display correct state immediately.
+</Tip>
+
+## UI Implementation
+
+Accessing favorite state for a specific image:
+
+```kotlin
+val randomImages by viewModel.randomImages.collectAsState()
+val favoriteStates by viewModel.favoriteState.collectAsState()
+
+randomImages.forEach { image ->
+    val isFavorite = favoriteStates[image.url] ?: false
+    
+    // Display image with favorite button
+    ImageCard(
+        nasaModel = image,
+        isFavorite = isFavorite,
+        onFavoriteClick = {
+            if (isFavorite) {
+                viewModel.removeFromFavorites(image)
+            } else {
+                viewModel.saveToFavorites(image)
+            }
+        }
+    )
+}
+```
+
+## Firebase Database Structure
+
+Random images share the same favorites structure as other features:
+
+```
+favorites/
+  └── {userId}/
+      ├── {pushId1}/
+      │   ├── id: "{pushId1}"
+      │   ├── title: "Random Image 1"
+      │   └── url: "https://..."
+      └── {pushId2}/
+          ├── id: "{pushId2}"
+          ├── title: "Random Image 2"
+          └── url: "https://..."
+```
+
+## Error Handling
+
+<AccordionGroup>
+  <Accordion title="Network Connection Error">
+    Displays network error message and resets image list to empty.
+  </Accordion>
+  
+  <Accordion title="API Error">
+    Caught and displayed via the `errorMessage` state flow.
+  </Accordion>
+  
+  <Accordion title="User Not Authenticated">
+    Shows authentication error when attempting favorite operations without login.
+  </Accordion>
+  
+  <Accordion title="Firebase Operations">
+    All Firebase operations are wrapped in try-catch blocks with specific error messages.
+  </Accordion>
+</AccordionGroup>
+
+## Developer Guide
+
+<Steps>
+  <Step title="Inject ViewModel">
+    ```kotlin
+    @Composable
+    fun RandomImageScreen(
+        randomImageViewModel: RandomImageViewModel = hiltViewModel()
+    ) {
+        // Implementation
+    }
+    ```
+  </Step>
+  
+  <Step title="Collect States">
+    ```kotlin
+    val randomImages by randomImageViewModel.randomImages.collectAsState()
+    val isLoading by randomImageViewModel.isLoading.collectAsState()
+    val favoriteStates by randomImageViewModel.favoriteState.collectAsState()
+    ```
+  </Step>
+  
+  <Step title="Load Images">
+    ```kotlin
+    LaunchedEffect(Unit) {
+        randomImageViewModel.loadRandomImages(count = 5)
+    }
+    ```
+  </Step>
+  
+  <Step title="Handle Favorite Actions">
+    ```kotlin
+    IconButton(
+        onClick = {
+            if (favoriteStates[image.url] == true) {
+                randomImageViewModel.removeFromFavorites(image)
+            } else {
+                randomImageViewModel.saveToFavorites(image)
+            }
+        }
+    ) {
+        Icon(
+            imageVector = if (favoriteStates[image.url] == true) 
+                Icons.Filled.Star else Icons.Outlined.Star,
+            contentDescription = "Favorite"
+        )
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Always check for null values when accessing the `favoriteStates` map, as images may not have a favorite state entry yet.
+</Warning>
+
+## Performance Considerations
+
+- The default count of 5 images balances discovery with API rate limits
+- Favorite status is checked in a single Firebase query for all loaded images
+- State updates use immutable map operations to ensure proper UI reactivity
+
+<Note>
+  Random images are selected by NASA's API from the entire APOD archive, so you may occasionally see the same image across different loads.
+</Note>

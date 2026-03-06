@@ -1,0 +1,498 @@
+---
+title: "Firebase"
+description: "Google's mobile and web application development platform"
+icon: "fire"
+---
+
+## Overview
+
+NASA Explorer integrates **Firebase** for backend services including user authentication and real-time database for storing favorite images. Firebase provides a comprehensive suite of tools that eliminates the need for custom backend infrastructure.
+
+<Info>
+Firebase is a Backend-as-a-Service (BaaS) platform that provides authentication, databases, hosting, and more with minimal setup.
+</Info>
+
+## Firebase Services Used
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="user-lock">
+    Email/password authentication for user accounts
+  </Card>
+  <Card title="Realtime Database" icon="database">
+    NoSQL cloud database for storing user favorites
+  </Card>
+  <Card title="Analytics" icon="chart-line">
+    Track app usage and user behavior
+  </Card>
+  <Card title="Cloud Services" icon="cloud">
+    Automatic sync and offline support
+  </Card>
+</CardGroup>
+
+## Project Setup
+
+Firebase is configured in the build files:
+
+```kotlin build.gradle.kts
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    id("com.google.gms.google-services")  // Google services plugin
+}
+
+dependencies {
+    // Firebase BoM (Bill of Materials) manages versions
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    
+    // Firebase products (versions managed by BoM)
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation(libs.firebase.database.ktx)
+}
+```
+
+```kotlin build.gradle.kts (root)
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.jetbrains.kotlin.android) apply false
+    id("com.google.gms.google-services") version "4.4.2" apply false
+}
+```
+
+<Tip>
+The Firebase BoM ensures all Firebase libraries use compatible versions. You don't need to specify individual versions.
+</Tip>
+
+## Hilt Modules for Firebase
+
+### Firebase Authentication Module
+
+```kotlin AuthNetworkModule.kt
+package com.ccandeladev.nasaexplorer.data.auth
+
+import com.google.firebase.auth.FirebaseAuth
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object AuthNetworkModule {
+    @Singleton
+    @Provides
+    fun provideFirebaseAuth() = FirebaseAuth.getInstance()
+}
+```
+
+### Firebase Database Module
+
+```kotlin FirebaseModule.kt
+package com.ccandeladev.nasaexplorer.data.di
+
+import com.google.firebase.database.FirebaseDatabase
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object FirebaseModule {
+
+    @Provides
+    @Singleton
+    fun provideFirebaseDatabase(): FirebaseDatabase {
+        return FirebaseDatabase.getInstance()
+    }
+}
+```
+
+## Firebase Authentication
+
+### Auth Service Implementation
+
+The `AuthService` class encapsulates all Firebase Authentication operations:
+
+```kotlin AuthService.kt
+package com.ccandeladev.nasaexplorer.data.auth
+
+import com.google.firebase.auth.AuthResult
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.tasks.await
+import javax.inject.Inject
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+class AuthService @Inject constructor(
+    private val firebaseAuth: FirebaseAuth
+) {
+
+    /**
+     * Login user with email and password
+     * Uses kotlinx-coroutines-play-services await() extension
+     */
+    suspend fun login(email: String, password: String): FirebaseUser? {
+        return firebaseAuth.signInWithEmailAndPassword(email, password).await().user
+    }
+
+    /**
+     * Register new user with email and password
+     * Uses suspendCancellableCoroutine for manual control
+     */
+    suspend fun register(email: String, password: String): FirebaseUser? {
+        return suspendCancellableCoroutine { cancellableContinuation ->
+            firebaseAuth.createUserWithEmailAndPassword(email, password)
+                .addOnSuccessListener { it: AuthResult? ->
+                    val user: FirebaseUser? = it?.user
+                    cancellableContinuation.resume(user)
+                }
+                .addOnFailureListener { it: Exception ->
+                    cancellableContinuation.resumeWithException(it)
+                }
+        }
+    }
+
+    /**
+     * Sign out the current user
+     */
+    fun userLogout() {
+        firebaseAuth.signOut()
+    }
+
+    /**
+     * Check if user is logged in
+     */
+    fun isUserLogged(): Boolean {
+        return getCurrentUser() != null
+    }
+
+    /**
+     * Get currently authenticated user
+     */
+    private fun getCurrentUser() = firebaseAuth.currentUser
+}
+```
+
+<Note>
+Two approaches to convert Firebase callbacks to coroutines:
+1. `await()` extension from kotlinx-coroutines-play-services (simpler)
+2. `suspendCancellableCoroutine` for more control over cancellation
+</Note>
+
+### Usage in ViewModel
+
+```kotlin LoginScreenViewModel.kt
+fun loginUser(email: String, password: String, onSuccess: () -> Unit) {
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val user = authService.login(email, password)
+            if (user != null) {
+                onSuccess()
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = "Error al iniciar sesión: ${e.message}"
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+## Firebase Realtime Database
+
+### Saving Favorites
+
+Users can save NASA images to their favorites:
+
+```kotlin DailyImageViewModel.kt
+/**
+ * Save a NASA image as favorite in Firebase Database
+ */
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                // Create new reference with auto-generated ID
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                // Map of favorite data to save
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),      // Firebase-generated ID
+                    "title" to nasaModel.title,            // Image title
+                    "url" to nasaModel.url                 // Image URL
+                )
+                
+                // Save data to Firebase and update favorite state
+                favoriteRef.setValue(favoriteImage).await()
+                _isFavorite.value = true
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Removing Favorites
+
+```kotlin DailyImageViewModel.kt
+/**
+ * Remove an image from favorites in Firebase
+ */
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                // Find and delete the favorite by URL
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+                
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                
+                _isFavorite.value = false
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al buscar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Checking Favorite Status
+
+```kotlin DailyImageViewModel.kt
+/**
+ * Check if an image is favorited by the current user
+ */
+fun checkIsFavorite(url: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(url)
+                    .get()
+                    .await()
+                
+                // Update state based on whether URL exists
+                _isFavorite.value = snapshot.exists()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+## Database Structure
+
+The Firebase Realtime Database structure for NASA Explorer:
+
+```json
+{
+  "favorites": {
+    "user_id_1": {
+      "favorite_key_1": {
+        "id": "favorite_key_1",
+        "title": "A Beautiful Galaxy",
+        "url": "https://apod.nasa.gov/apod/image/2403/galaxy.jpg"
+      },
+      "favorite_key_2": {
+        "id": "favorite_key_2",
+        "title": "Nebula Cloud",
+        "url": "https://apod.nasa.gov/apod/image/2403/nebula.jpg"
+      }
+    },
+    "user_id_2": {
+      "favorite_key_3": {
+        "id": "favorite_key_3",
+        "title": "Mars Rover View",
+        "url": "https://apod.nasa.gov/apod/image/2403/mars.jpg"
+      }
+    }
+  }
+}
+```
+
+## Favorite Icon State Management
+
+UI updates based on favorite state:
+
+```kotlin DailyImageScreen.kt
+@Composable
+fun ImageItem(nasaModel: NasaModel, dailyImageViewModel: DailyImageViewModel) {
+    val isFavorite by dailyImageViewModel.isFavorite.collectAsState()
+
+    IconButton(onClick = {
+        if (isFavorite) {
+            dailyImageViewModel.removeFromFavorites(nasaModel = nasaModel)
+        } else {
+            dailyImageViewModel.saveToFavorites(nasaModel = nasaModel)
+        }
+    }) {
+        Icon(
+            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+            contentDescription = "Favorites border",
+            tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+        )
+    }
+}
+```
+
+## Coroutine Integration
+
+Firebase operations use `await()` to convert callbacks to suspend functions:
+
+```kotlin
+// Before (callback-based):
+favoriteRef.setValue(favoriteImage)
+    .addOnSuccessListener { /* success */ }
+    .addOnFailureListener { /* error */ }
+
+// After (coroutine-based):
+try {
+    favoriteRef.setValue(favoriteImage).await()
+    // success
+} catch (e: Exception) {
+    // error
+}
+```
+
+## Benefits in NASA Explorer
+
+<AccordionGroup>
+  <Accordion title="No Backend Code">
+    Firebase eliminates the need to write and maintain backend server code, authentication logic, and database management.
+  </Accordion>
+  
+  <Accordion title="Real-time Sync">
+    Changes to favorites sync instantly across devices when users are logged in.
+  </Accordion>
+  
+  <Accordion title="Offline Support">
+    Firebase SDK caches data locally, allowing the app to work offline and sync when connectivity returns.
+  </Accordion>
+  
+  <Accordion title="User Isolation">
+    Each user's favorites are stored under their UID, ensuring data privacy and isolation.
+  </Accordion>
+</AccordionGroup>
+
+## Security Rules
+
+For production, configure Firebase Database rules to secure user data:
+
+```json
+{
+  "rules": {
+    "favorites": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid"
+      }
+    }
+  }
+}
+```
+
+<Warning>
+Users can only read and write their own favorites. Never allow public read/write access in production.
+</Warning>
+
+## Best Practices
+
+<Steps>
+  <Step title="Use BoM for Version Management">
+    The Firebase BoM ensures compatible versions across all Firebase libraries.
+  </Step>
+  
+  <Step title="Inject Firebase Instances">
+    Use Hilt to provide Firebase instances as singletons for efficient resource usage.
+  </Step>
+  
+  <Step title="Convert to Coroutines">
+    Use `await()` to convert Firebase callbacks to suspend functions for cleaner code.
+  </Step>
+  
+  <Step title="Handle Auth States">
+    Always check `firebaseAuth.currentUser` before performing database operations.
+  </Step>
+  
+  <Step title="Implement Security Rules">
+    Configure proper security rules to protect user data in production.
+  </Step>
+</Steps>
+
+## Error Handling
+
+<CardGroup cols={2}>
+  <Card title="Network Errors" icon="wifi-slash">
+    Firebase operations can fail due to network issues - wrap in try-catch blocks
+  </Card>
+  <Card title="Auth Errors" icon="user-xmark">
+    Handle cases where user is not authenticated or token expires
+  </Card>
+  <Card title="Permission Errors" icon="ban">
+    Database rules can reject operations - provide user-friendly error messages
+  </Card>
+  <Card title="Data Errors" icon="circle-exclamation">
+    Validate data before saving to prevent invalid entries
+  </Card>
+</CardGroup>
+
+## Firebase Console
+
+Monitor and manage your app through the Firebase Console:
+
+- **Authentication**: View registered users and authentication methods
+- **Realtime Database**: Browse and edit database data
+- **Analytics**: Track user engagement and app usage
+- **Crashlytics**: Monitor app crashes and errors (if configured)
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Firebase Documentation" icon="book" href="https://firebase.google.com/docs">
+    Official Firebase documentation for all products
+  </Card>
+  <Card title="Firebase Android" icon="android" href="https://firebase.google.com/docs/android/setup">
+    Setup guide for Firebase on Android
+  </Card>
+  <Card title="Firebase Auth" icon="user-lock" href="https://firebase.google.com/docs/auth">
+    Authentication documentation and best practices
+  </Card>
+  <Card title="Realtime Database" icon="database" href="https://firebase.google.com/docs/database">
+    Realtime Database guide and API reference
+  </Card>
+</CardGroup>

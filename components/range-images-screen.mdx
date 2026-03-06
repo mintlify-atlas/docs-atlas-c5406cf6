@@ -1,0 +1,494 @@
+---
+title: 'Range Images Screen'
+description: 'Date range selector to display NASA images between two dates'
+icon: 'calendar-range'
+---
+
+## Overview
+
+The Range Images Screen allows users to select a start and end date to fetch NASA astronomy images within that date range. It features Material 3 DatePicker dialogs, date validation, and displays results in a scrollable list with favorites functionality.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Date Range Selection" icon="calendar-days">
+    Dual date pickers for start and end date selection
+  </Card>
+  <Card title="Date Validation" icon="circle-check">
+    Ensures end date is after start date and not in the future
+  </Card>
+  <Card title="Background Image" icon="image">
+    Decorative background before images are loaded
+  </Card>
+  <Card title="Animated Elevation" icon="up-down">
+    Smooth card elevation animation on description expansion
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### RangeImagesScreen Composable
+
+```kotlin
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RangeImagesScreen(rangeImagesViewModel: RangeImagesViewModel = hiltViewModel()) {
+    val dateRangeImages = rangeImagesViewModel.dateRangeImages.collectAsState()
+    val errorMessage = rangeImagesViewModel.errorMessage.collectAsState()
+    val isLoading = rangeImagesViewModel.isLoading.collectAsState()
+
+    var startDay by rememberSaveable { mutableStateOf("") }
+    var endDay by rememberSaveable { mutableStateOf("") }
+    var showStartDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showEndDatePicker by rememberSaveable { mutableStateOf(false) }
+
+    val context: Context = LocalContext.current
+
+    Box(Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.backgroundrange2),
+            contentDescription = "Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        
+        // Date selection UI and results
+    }
+}
+```
+
+## ViewModel Implementation
+
+### RangeImagesViewModel
+
+```kotlin
+@HiltViewModel
+class RangeImagesViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _dateRangeImages = MutableStateFlow<List<NasaModel>>(emptyList())
+    val dateRangeImages: StateFlow<List<NasaModel>> = _dateRangeImages
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val favoriteStates: StateFlow<Map<String, Boolean>> = _favoriteStates
+}
+```
+
+## Date Selection UI
+
+### Date Picker Buttons
+
+```kotlin
+Column(
+    modifier = Modifier.padding(top = 18.dp),
+    verticalArrangement = Arrangement.SpaceBetween,
+    horizontalAlignment = Alignment.CenterHorizontally
+) {
+    Text(
+        text = "Selecciona Rango de Fechas",
+        style = MaterialTheme.typography.headlineSmall,
+        modifier = Modifier.padding(bottom = 24.dp)
+    )
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Button(
+            onClick = { showStartDatePicker = true },
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(startDay.ifEmpty { "Fecha inicio" })
+        }
+        
+        Spacer(modifier = Modifier.width(8.dp))
+
+        Button(
+            onClick = { showEndDatePicker = true },
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(endDay.ifEmpty { "Fecha fin" })
+        }
+    }
+}
+```
+
+### Load Images Button
+
+```kotlin
+Button(
+    onClick = {
+        if (startDay.isNotEmpty() && endDay.isNotEmpty()) {
+            rangeImagesViewModel.loadDateRangeImages(
+                startDate = startDay,
+                endDate = endDay
+            )
+        } else {
+            showToastDate(context = context, "Selecciona rango de Fechas")
+        }
+    },
+    modifier = Modifier
+        .padding(32.dp)
+        .fillMaxWidth()
+) {
+    Text(text = "Ver imágenes")
+}
+```
+
+## DatePicker Dialogs
+
+### Start Date Picker
+
+```kotlin
+if (showStartDatePicker) {
+    val datePickerState = rememberDatePickerState()
+
+    DatePickerDialog(
+        onDismissRequest = { showStartDatePicker = false },
+        confirmButton = {
+            TextButton(onClick = {
+                val selectedDay = datePickerState.selectedDateMillis
+                
+                if (selectedDay != null && selectedDay <= System.currentTimeMillis()) {
+                    startDay = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        .format(selectedDay)
+                    showStartDatePicker = false
+                } else {
+                    showToastDate(context = context, "Selección de fecha no válida")
+                }
+            }) {
+                Text(text = "Aceptar")
+            }
+        }
+    ) {
+        DatePicker(
+            state = datePickerState,
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp),
+            title = { Text(text = "Selecciona fecha de inicio") },
+            headline = {
+                DatePickerDefaults.DatePickerHeadline(
+                    selectedDateMillis = datePickerState.selectedDateMillis,
+                    displayMode = datePickerState.displayMode,
+                    dateFormatter = remember { DatePickerDefaults.dateFormatter() }
+                )
+            }
+        )
+    }
+}
+```
+
+### End Date Picker with Validation
+
+```kotlin
+if (showEndDatePicker) {
+    val datePickerState = rememberDatePickerState()
+
+    DatePickerDialog(
+        onDismissRequest = { showEndDatePicker = false },
+        confirmButton = {
+            TextButton(onClick = {
+                val selectedDate = datePickerState.selectedDateMillis
+                val startDateInMillis = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                    .parse(startDay)?.time
+                
+                val isValidStartDate = selectedDate != null && startDateInMillis != null
+                val isAfterStartDate = selectedDate!! >= startDateInMillis!!
+                val isBeforeCurrentDate = selectedDate <= System.currentTimeMillis()
+
+                if (isValidStartDate && isAfterStartDate && isBeforeCurrentDate) {
+                    endDay = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        .format(selectedDate)
+                    showEndDatePicker = false
+                } else {
+                    showToastDate(context, "Selección de fecha no válida")
+                }
+            }) {
+                Text(text = "Aceptar")
+            }
+        }
+    ) {
+        DatePicker(
+            state = datePickerState,
+            modifier = Modifier.padding(top = 16.dp, start = 16.dp),
+            title = { Text(text = "Selecciona fecha fin") },
+            headline = {
+                DatePickerDefaults.DatePickerHeadline(
+                    selectedDateMillis = datePickerState.selectedDateMillis,
+                    displayMode = datePickerState.displayMode,
+                    dateFormatter = remember { DatePickerDefaults.dateFormatter() }
+                )
+            }
+        )
+    }
+}
+```
+
+<Warning>
+  **Date Validation**: End date must be after start date and not in the future.
+</Warning>
+
+## Loading Range Images
+
+### loadDateRangeImages Function
+
+```kotlin
+fun loadDateRangeImages(startDate: String, endDate: String) {
+    viewModelScope.launch {
+        _isLoading.value = true
+
+        try {
+            val results = nasaRepository.getImagesInRange(
+                startDate = startDate, 
+                endDate = endDate
+            )
+            _dateRangeImages.value = results
+            _errorMessage.value = null
+            checkFavorites(results.map { it.url })
+        } catch (e: Exception) {
+            _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _dateRangeImages.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Info>
+  **Date Format**: Dates must be in "yyyy-MM-dd" format (e.g., "2024-03-15").
+</Info>
+
+## Image Display
+
+### ImageItem with Animated Elevation
+
+```kotlin
+@Composable
+fun ImageItem(nasaModel: NasaModel, rangeImagesViewModel: RangeImagesViewModel) {
+    val favoriteState by rangeImagesViewModel.favoriteStates.collectAsState()
+    val isFavorite = favoriteState[nasaModel.url] ?: false
+    var isExpanded by remember { mutableStateOf(false) }
+
+    val animatedElevation by animateDpAsState(
+        targetValue = if (isExpanded) 8.dp else 4.dp,
+        animationSpec = tween(durationMillis = 300),
+        label = "Elevación de la Card"
+    )
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+    ) {
+        Text(
+            text = nasaModel.title,
+            style = MaterialTheme.typography.headlineLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(nasaModel.url)
+                .crossfade(1000).build(),
+            contentDescription = nasaModel.title,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp)
+                .padding(top = 24.dp)
+                .clip(RoundedCornerShape(16.dp)),
+            contentScale = ContentScale.Crop,
+            placeholder = painterResource(id = R.drawable.placeholder),
+            error = painterResource(id = R.drawable.placeholder)
+        )
+        
+        // Favorite button and description card
+    }
+}
+```
+
+### Animated Card Elevation
+
+```kotlin
+Card(
+    Modifier
+        .fillMaxWidth()
+        .padding(top = 8.dp)
+        .clickable { isExpanded = !isExpanded },
+    shape = MaterialTheme.shapes.medium,
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    elevation = CardDefaults.elevatedCardElevation(animatedElevation),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f))
+) {
+    Column(Modifier.padding(8.dp)) {
+        Text(
+            text = nasaModel.explanation,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = if (isExpanded) Int.MAX_VALUE else 3,
+            textAlign = TextAlign.Justify,
+            modifier = Modifier.fillMaxWidth()
+        )
+        
+        Text(
+            text = if (isExpanded) "ver menos" else "ver más",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+    }
+}
+```
+
+<Check>
+  **Animation**: Card elevation animates from 4dp to 8dp over 300ms when description is expanded.
+</Check>
+
+## Favorites Management
+
+The screen uses the same favorites system as Random Image Screen:
+
+### Save to Favorites
+
+```kotlin
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = true
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favoritos ${e.message}"
+            }
+        }
+    }
+}
+```
+
+## Toast Helper Function
+
+### showToastDate
+
+```kotlin
+fun showToastDate(context: Context, message: String) {
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+}
+```
+
+Used for date validation error messages.
+
+## Results Display
+
+### LazyColumn Results
+
+```kotlin
+when {
+    isLoading.value -> {
+        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+    }
+    
+    errorMessage.value != null -> {
+        Text(
+            text = "$errorMessage",
+            color = Color.Black,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.align(Alignment.Center).padding(24.dp)
+        )
+    }
+    
+    dateRangeImages.value.isNotEmpty() -> {
+        LazyColumn(
+            Modifier
+                .fillMaxSize()
+                .background(color = MaterialTheme.colorScheme.background)
+                .padding(top = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            items(dateRangeImages.value) { nasaModel ->
+                ImageItem(
+                    nasaModel = nasaModel,
+                    rangeImagesViewModel = rangeImagesViewModel
+                )
+            }
+        }
+    }
+}
+```
+
+## State Preservation
+
+Date selections are preserved across configuration changes:
+
+```kotlin
+var startDay by rememberSaveable { mutableStateOf("") }
+var endDay by rememberSaveable { mutableStateOf("") }
+var showStartDatePicker by rememberSaveable { mutableStateOf(false) }
+var showEndDatePicker by rememberSaveable { mutableStateOf(false) }
+```
+
+## Dependencies
+
+### Date Formatting
+
+```kotlin
+import android.icu.text.SimpleDateFormat
+import java.util.Locale
+```
+
+### Material 3 DatePicker
+
+```kotlin
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DatePickerDefaults
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.ExperimentalMaterial3Api
+```
+
+### Animation
+
+```kotlin
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/rangeimagesscreen/
+├── RangeImagesScreen.kt
+└── RangeImagesViewModel.kt
+```
+
+<Check>
+  **Best Practice**: Uses rememberSaveable for date state preservation and proper date validation logic.
+</Check>

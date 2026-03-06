@@ -1,0 +1,439 @@
+---
+title: 'Date Range Images'
+description: 'Fetch and browse NASA APOD images across custom date ranges'
+icon: 'calendar-range'
+---
+
+## Overview
+
+The Date Range feature enables users to retrieve multiple NASA Astronomy Pictures of the Day within a specified date range. This is perfect for exploring themed collections, historical periods, or browsing all images from a specific month or year.
+
+## User Experience
+
+<Steps>
+  <Step title="Select Start Date">
+    Choose the beginning date for your image range using a date picker.
+  </Step>
+  
+  <Step title="Select End Date">
+    Pick the ending date to define your search range. The end date is optional.
+  </Step>
+  
+  <Step title="Load Images">
+    The app fetches all APOD images published between your selected dates.
+  </Step>
+  
+  <Step title="Browse Results">
+    Scroll through the chronological collection, with each image showing its title, date, and explanation.
+  </Step>
+  
+  <Step title="Manage Favorites">
+    Each image displays its favorite status. Tap the icon to save or remove from your collection.
+  </Step>
+</Steps>
+
+<Info>
+  The NASA APOD API returns images in chronological order when fetching date ranges.
+</Info>
+
+## API Integration
+
+### NASA API Endpoint
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaApiService.kt
+interface NasaApiService {
+
+    @GET("planetary/apod")
+    suspend fun getImagesInRange(
+        @Query("api_key") apiKey: String,
+        @Query("start_date") startDate: String,
+        @Query("end_date") endDate: String? = null
+    ): List<NasaResponse>
+}
+```
+
+**Parameters:**
+- `api_key`: NASA API authentication key
+- `start_date`: Starting date in YYYY-MM-DD format (required)
+- `end_date`: Ending date in YYYY-MM-DD format (optional, defaults to today)
+
+**Returns:** List of `NasaResponse` objects for each day in the range.
+
+### Repository Implementation
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/api/NasaRepository.kt
+class NasaRepository @Inject constructor(private val nasaApiService: NasaApiService) {
+
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getImagesInRange(startDate: String, endDate: String? = null): List<NasaModel> {
+        val response = nasaApiService.getImagesInRange(
+            apiKey = API_KEY,
+            startDate = startDate,
+            endDate = endDate
+        )
+        return response.map { it.toNasaModel() }
+    }
+}
+```
+
+<Note>
+  If `endDate` is omitted, the API returns images from `startDate` to the current date.
+</Note>
+
+## ViewModel Architecture
+
+### RangeImagesViewModel
+
+Manages date range images and their favorite states:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/rangeimagesscreen/RangeImagesViewModel.kt
+@HiltViewModel
+class RangeImagesViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel() {
+
+    private val _dateRangeImages = MutableStateFlow<List<NasaModel>>(emptyList())
+    val dateRangeImages: StateFlow<List<NasaModel>> = _dateRangeImages
+
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val favoriteStates: StateFlow<Map<String, Boolean>> = _favoriteStates
+
+    fun loadDateRangeImages(startDate: String, endDate: String) {
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            try {
+                val results = nasaRepository.getImagesInRange(
+                    startDate = startDate, 
+                    endDate = endDate
+                )
+                _dateRangeImages.value = results
+                _errorMessage.value = null
+                checkFavorites(results.map { it.url })
+            } catch (e: Exception) {
+                _errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+                _dateRangeImages.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+### State Management
+
+<CardGroup cols={2}>
+  <Card title="dateRangeImages" icon="images">
+    List of `NasaModel` objects for all images in the selected date range.
+  </Card>
+  
+  <Card title="isLoading" icon="spinner">
+    Boolean indicating active API request status.
+  </Card>
+  
+  <Card title="errorMessage" icon="exclamation-circle">
+    Error message string for network or validation failures.
+  </Card>
+  
+  <Card title="favoriteStates" icon="star">
+    Map tracking favorite status for each image by URL.
+  </Card>
+</CardGroup>
+
+## Favorites Management
+
+### Save to Favorites
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/rangeimagesscreen/RangeImagesViewModel.kt
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                favoriteRef.setValue(favoriteImage).await()
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = true
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Remove from Favorites
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/rangeimagesscreen/RangeImagesViewModel.kt
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef
+                    .orderByChild("url")
+                    .equalTo(nasaModel.url)
+                    .get()
+                    .await()
+
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = false
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Check Favorites Status
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/rangeimagesscreen/RangeImagesViewModel.kt
+fun checkFavorites(urls: List<String>) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                val snapshot = favoriteRef.get().await()
+
+                val currentState = _favoriteStates.value.toMutableMap()
+                for (url in urls) {
+                    currentState[url] = snapshot.children.any { 
+                        it.child("url").value == url 
+                    }
+                }
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<Tip>
+  The `checkFavorites()` function is automatically called after loading date range images to populate favorite icon states.
+</Tip>
+
+## Date Format
+
+All dates must follow the **YYYY-MM-DD** format:
+
+```kotlin
+// Correct format
+viewModel.loadDateRangeImages("2024-01-01", "2024-01-31")
+
+// Incorrect - will cause API error
+viewModel.loadDateRangeImages("01/01/2024", "01/31/2024")
+```
+
+<Warning>
+  The NASA APOD archive starts on June 16, 1995. Requesting dates before this will return an error.
+</Warning>
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Monthly Collection" icon="calendar">
+    Fetch all images from a specific month:
+    ```kotlin
+    loadDateRangeImages("2024-03-01", "2024-03-31")
+    ```
+  </Card>
+  
+  <Card title="Year Overview" icon="calendar-days">
+    Browse an entire year:
+    ```kotlin
+    loadDateRangeImages("2023-01-01", "2023-12-31")
+    ```
+  </Card>
+  
+  <Card title="Custom Period" icon="calendar-week">
+    Any arbitrary date range:
+    ```kotlin
+    loadDateRangeImages("2024-06-15", "2024-07-04")
+    ```
+  </Card>
+  
+  <Card title="From Date to Today" icon="calendar-arrow-down">
+    Omit end date for "up to now":
+    ```kotlin
+    loadDateRangeImages("2024-01-01", "")
+    ```
+  </Card>
+</CardGroup>
+
+## Firebase Database Structure
+
+```
+favorites/
+  └── {userId}/
+      ├── {pushId1}/
+      │   ├── id: "{pushId1}"
+      │   ├── title: "2024-01-15 Image"
+      │   └── url: "https://..."
+      └── {pushId2}/
+          ├── id: "{pushId2}"
+          ├── title: "2024-01-20 Image"
+          └── url: "https://..."
+```
+
+## Error Handling
+
+<AccordionGroup>
+  <Accordion title="Network Error">
+    Displays connection error message and clears the image list.
+  </Accordion>
+  
+  <Accordion title="Invalid Date Format">
+    API will return an error if dates aren't in YYYY-MM-DD format.
+  </Accordion>
+  
+  <Accordion title="Date Out of Range">
+    Dates before June 16, 1995 or future dates will cause API errors.
+  </Accordion>
+  
+  <Accordion title="End Date Before Start Date">
+    API returns an error if the date range is reversed.
+  </Accordion>
+  
+  <Accordion title="Authentication Required">
+    Favorite operations require user authentication.
+  </Accordion>
+</AccordionGroup>
+
+## Developer Implementation
+
+<Steps>
+  <Step title="Date Input UI">
+    Implement date pickers for start and end dates:
+    ```kotlin
+    var startDate by remember { mutableStateOf("") }
+    var endDate by remember { mutableStateOf("") }
+    
+    DatePickerDialog(
+        onDateSelected = { selectedDate ->
+            startDate = selectedDate.format("yyyy-MM-dd")
+        }
+    )
+    ```
+  </Step>
+  
+  <Step title="Inject ViewModel">
+    ```kotlin
+    @Composable
+    fun RangeImagesScreen(
+        rangeImagesViewModel: RangeImagesViewModel = hiltViewModel()
+    ) {
+        // Implementation
+    }
+    ```
+  </Step>
+  
+  <Step title="Collect States">
+    ```kotlin
+    val dateRangeImages by rangeImagesViewModel.dateRangeImages.collectAsState()
+    val isLoading by rangeImagesViewModel.isLoading.collectAsState()
+    val favoriteStates by rangeImagesViewModel.favoriteStates.collectAsState()
+    ```
+  </Step>
+  
+  <Step title="Load Images">
+    ```kotlin
+    Button(
+        onClick = {
+            rangeImagesViewModel.loadDateRangeImages(startDate, endDate)
+        }
+    ) {
+        Text("Load Images")
+    }
+    ```
+  </Step>
+  
+  <Step title="Display Results">
+    ```kotlin
+    LazyColumn {
+        items(dateRangeImages) { image ->
+            val isFavorite = favoriteStates[image.url] ?: false
+            ImageCard(
+                nasaModel = image,
+                isFavorite = isFavorite,
+                onFavoriteClick = {
+                    if (isFavorite) {
+                        rangeImagesViewModel.removeFromFavorites(image)
+                    } else {
+                        rangeImagesViewModel.saveToFavorites(image)
+                    }
+                }
+            )
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+## Performance Considerations
+
+<Note>
+  Large date ranges can return many images. Consider implementing pagination or limiting the maximum range to avoid performance issues and API rate limits.
+</Note>
+
+**Recommended Practices:**
+- Limit initial ranges to 1 month or less
+- Show a warning for ranges exceeding 100 days
+- Implement lazy loading for large result sets
+- Cache results locally to reduce API calls
+
+## API Rate Limits
+
+NASA API has rate limits:
+- **Standard API Key**: 1,000 requests per hour
+- Consider the size of your date ranges when planning features
+- Implement appropriate error handling for rate limit responses
+
+<Tip>
+  For production apps, consider caching date range results or implementing incremental loading to stay within rate limits.
+</Tip>

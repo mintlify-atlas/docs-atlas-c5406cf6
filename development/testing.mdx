@@ -1,0 +1,442 @@
+---
+title: Testing Guide
+description: Testing setup, strategies, and best practices for NASA Explorer
+---
+
+## Testing Overview
+
+NASA Explorer uses a combination of unit tests and instrumented tests to ensure code quality and reliability. The project follows Android testing best practices with JUnit and Espresso.
+
+## Test Structure
+
+The project includes two types of tests:
+
+```
+app/src/
+├── test/              # Unit tests (JVM)
+│   └── java/com/ccandeladev/nasaexplorer/
+│       └── ExampleUnitTest.kt
+└── androidTest/       # Instrumented tests (Android device)
+    └── java/com/ccandeladev/nasaexplorer/
+        └── ExampleInstrumentedTest.kt
+```
+
+<Note>
+Unit tests run on the JVM and are faster, while instrumented tests run on Android devices or emulators and test Android-specific functionality.
+</Note>
+
+## Testing Dependencies
+
+The project is configured with the following testing libraries:
+
+<CodeGroup>
+```kotlin Unit Testing
+testImplementation(libs.junit)  // JUnit 4.13.2
+```
+
+```kotlin Instrumented Testing
+androidTestImplementation(libs.androidx.junit)           // AndroidX JUnit 1.2.1
+androidTestImplementation(libs.androidx.espresso.core)   // Espresso 3.6.1
+androidTestImplementation(platform(libs.androidx.compose.bom))
+androidTestImplementation(libs.androidx.ui.test.junit4)  // Compose UI testing
+```
+
+```kotlin Debug Utilities
+debugImplementation(libs.androidx.ui.tooling)
+debugImplementation(libs.androidx.ui.test.manifest)
+```
+</CodeGroup>
+
+### Test Runner Configuration
+
+The app is configured to use the AndroidX test runner:
+
+```kotlin
+android {
+    defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+}
+```
+
+## Unit Testing
+
+Unit tests verify business logic without requiring an Android device.
+
+### Running Unit Tests
+
+<Steps>
+  <Step title="Via Android Studio">
+    Right-click on the `test` directory or a specific test file and select **Run Tests**.
+  </Step>
+  
+  <Step title="Via Gradle Command">
+    Run all unit tests from the command line:
+    
+    ```bash
+    ./gradlew test
+    ```
+    
+    Run tests for a specific build variant:
+    
+    ```bash
+    ./gradlew testDebugUnitTest
+    ```
+  </Step>
+  
+  <Step title="View Test Reports">
+    Test reports are generated at:
+    
+    ```
+    app/build/reports/tests/testDebugUnitTest/index.html
+    ```
+  </Step>
+</Steps>
+
+### Example Unit Test
+
+The project includes a basic unit test example:
+
+```kotlin ExampleUnitTest.kt
+package com.ccandeladev.nasaexplorer
+
+import org.junit.Test
+import org.junit.Assert.*
+
+class ExampleUnitTest {
+    @Test
+    fun addition_isCorrect() {
+        assertEquals(4, 2 + 2)
+    }
+}
+```
+
+### Writing Unit Tests
+
+When writing unit tests for NASA Explorer, focus on:
+
+<Steps>
+  <Step title="ViewModel Logic">
+    Test state management and business logic in ViewModels:
+    
+    ```kotlin
+    @Test
+    fun `getDailyImage updates state correctly`() = runTest {
+        // Given
+        val repository = mockk<NasaRepository>()
+        val viewModel = DailyImageViewModel(repository)
+        
+        // When
+        coEvery { repository.getDailyImage() } returns Result.success(mockNasaModel)
+        viewModel.loadDailyImage()
+        
+        // Then
+        assertTrue(viewModel.uiState.value is UiState.Success)
+    }
+    ```
+  </Step>
+  
+  <Step title="Repository Functions">
+    Test data transformation and API response handling:
+    
+    ```kotlin
+    @Test
+    fun `repository maps API response to domain model`() = runTest {
+        // Given
+        val apiService = mockk<NasaApiService>()
+        val repository = NasaRepository(apiService)
+        
+        // When
+        coEvery { apiService.getApod(any(), any()) } returns mockApiResponse
+        val result = repository.getDailyImage()
+        
+        // Then
+        assertTrue(result.isSuccess)
+        assertEquals("Expected Title", result.getOrNull()?.title)
+    }
+    ```
+  </Step>
+  
+  <Step title="Domain Model Validation">
+    Test data model transformations and validation logic:
+    
+    ```kotlin
+    @Test
+    fun `NasaModel correctly parses date format`() {
+        val model = NasaModel(
+            title = "Test",
+            date = "2024-03-06",
+            // ... other fields
+        )
+        assertTrue(model.isValidDate())
+    }
+    ```
+  </Step>
+</Steps>
+
+## Instrumented Testing
+
+Instrumented tests run on Android devices and test Android-specific functionality.
+
+### Running Instrumented Tests
+
+<Steps>
+  <Step title="Connect Device">
+    Connect an Android device via USB or start an emulator.
+  </Step>
+  
+  <Step title="Via Android Studio">
+    Right-click on the `androidTest` directory and select **Run Tests**.
+  </Step>
+  
+  <Step title="Via Gradle Command">
+    Run instrumented tests from the command line:
+    
+    ```bash
+    ./gradlew connectedAndroidTest
+    ```
+    
+    Run on a specific device:
+    
+    ```bash
+    ./gradlew connectedDebugAndroidTest
+    ```
+  </Step>
+</Steps>
+
+### Example Instrumented Test
+
+```kotlin ExampleInstrumentedTest.kt
+package com.ccandeladev.nasaexplorer
+
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.junit.Assert.*
+
+@RunWith(AndroidJUnit4::class)
+class ExampleInstrumentedTest {
+    @Test
+    fun useAppContext() {
+        // Context of the app under test
+        val appContext = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals("com.ccandeladev.nasaexplorer", appContext.packageName)
+    }
+}
+```
+
+### Testing Compose UI
+
+For testing Jetpack Compose screens, use the Compose testing APIs:
+
+```kotlin
+@RunWith(AndroidJUnit4::class)
+class LoginScreenTest {
+    @get:Rule
+    val composeTestRule = createComposeRule()
+    
+    @Test
+    fun loginScreen_displaysEmailAndPasswordFields() {
+        composeTestRule.setContent {
+            LoginScreen(onLoginSuccess = {})
+        }
+        
+        composeTestRule
+            .onNodeWithText("Email")
+            .assertIsDisplayed()
+        
+        composeTestRule
+            .onNodeWithText("Password")
+            .assertIsDisplayed()
+    }
+    
+    @Test
+    fun loginButton_clickable_whenFieldsFilled() {
+        composeTestRule.setContent {
+            LoginScreen(onLoginSuccess = {})
+        }
+        
+        // Fill in email
+        composeTestRule
+            .onNodeWithText("Email")
+            .performTextInput("test@example.com")
+        
+        // Fill in password
+        composeTestRule
+            .onNodeWithText("Password")
+            .performTextInput("password123")
+        
+        // Click login button
+        composeTestRule
+            .onNodeWithText("Login")
+            .performClick()
+    }
+}
+```
+
+## Testing Best Practices
+
+### Mocking Dependencies
+
+Use **MockK** for mocking Kotlin classes:
+
+```kotlin
+testImplementation("io.mockk:mockk:1.13.8")
+```
+
+```kotlin
+@Test
+fun `repository handles API errors gracefully`() = runTest {
+    // Given
+    val apiService = mockk<NasaApiService>()
+    val repository = NasaRepository(apiService)
+    
+    // When
+    coEvery { apiService.getApod(any(), any()) } throws IOException("Network error")
+    val result = repository.getDailyImage()
+    
+    // Then
+    assertTrue(result.isFailure)
+}
+```
+
+### Testing Coroutines
+
+Use `runTest` from kotlinx-coroutines-test:
+
+```kotlin
+testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+```
+
+```kotlin
+@Test
+fun `viewModel loads data asynchronously`() = runTest {
+    val viewModel = MyViewModel(repository)
+    viewModel.loadData()
+    
+    advanceUntilIdle()  // Wait for all coroutines to complete
+    
+    assertTrue(viewModel.uiState.value is UiState.Success)
+}
+```
+
+### Testing Firebase
+
+For testing Firebase functionality:
+
+<Steps>
+  <Step title="Use Firebase Emulator Suite">
+    Run Firebase Authentication and Realtime Database locally:
+    
+    ```bash
+    firebase emulators:start
+    ```
+  </Step>
+  
+  <Step title="Configure Test Environment">
+    Point your tests to the local emulator:
+    
+    ```kotlin
+    @Before
+    fun setUp() {
+        FirebaseAuth.getInstance().useEmulator("10.0.2.2", 9099)
+        FirebaseDatabase.getInstance().useEmulator("10.0.2.2", 9000)
+    }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+The IP address `10.0.2.2` is used to connect to localhost from an Android emulator. Use `localhost` for physical devices connected via USB.
+</Warning>
+
+## Test Coverage
+
+Generate test coverage reports:
+
+```bash
+# Run tests with coverage
+./gradlew testDebugUnitTest jacocoTestReport
+
+# View coverage report
+open app/build/reports/jacoco/jacocoTestReport/html/index.html
+```
+
+### Coverage Configuration
+
+Add JaCoCo to your `build.gradle.kts`:
+
+```kotlin
+android {
+    buildTypes {
+        debug {
+            enableAndroidTestCoverage = true
+            enableUnitTestCoverage = true
+        }
+    }
+}
+```
+
+## Continuous Integration
+
+For CI/CD pipelines, run tests in headless mode:
+
+```yaml .github/workflows/test.yml
+name: Run Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      
+      - name: Run Unit Tests
+        run: ./gradlew test
+      
+      - name: Run Instrumented Tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          script: ./gradlew connectedCheck
+```
+
+<Note>
+Instrumented tests in CI require an Android emulator, which can significantly increase build times. Consider running them only on pull requests or main branch commits.
+</Note>
+
+## Debugging Tests
+
+Tips for debugging failing tests:
+
+<Steps>
+  <Step title="Enable Verbose Logging">
+    Add detailed logging in your test methods:
+    
+    ```kotlin
+    @Test
+    fun myTest() {
+        println("Test started")
+        val result = performOperation()
+        println("Result: $result")
+        assertEquals(expected, result)
+    }
+    ```
+  </Step>
+  
+  <Step title="Use Debug Breakpoints">
+    Set breakpoints in Android Studio and run tests in debug mode.
+  </Step>
+  
+  <Step title="Check Test Reports">
+    Review detailed error messages in the HTML test reports generated in the `build/reports/` directory.
+  </Step>
+</Steps>

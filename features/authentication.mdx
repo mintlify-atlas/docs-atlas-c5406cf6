@@ -1,0 +1,257 @@
+---
+title: 'Authentication'
+description: 'Learn how NASA Explorer handles user authentication with Firebase'
+icon: 'lock'
+---
+
+## Overview
+
+NASA Explorer uses Firebase Authentication to manage user accounts. The authentication system supports email/password-based login and registration, ensuring secure access to personalized features like favorites and comments.
+
+## User Experience
+
+<Steps>
+  <Step title="Registration">
+    New users can create an account by providing an email address and password (minimum 6 characters). The app validates email format and password strength before submission.
+  </Step>
+  
+  <Step title="Login">
+    Returning users sign in with their registered email and password. The app maintains session state across app launches.
+  </Step>
+  
+  <Step title="Access Protected Features">
+    Once authenticated, users can save favorite images, add comments, and sync their data across devices.
+  </Step>
+</Steps>
+
+<Info>
+  All user data is securely stored in Firebase Realtime Database and synced across devices.
+</Info>
+
+## Authentication Architecture
+
+### AuthService
+
+The `AuthService` class provides a centralized interface for Firebase Authentication operations:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/data/auth/AuthService.kt
+class AuthService @Inject constructor(private val firebaseAuth: FirebaseAuth) {
+
+    /**
+     * Performs user login with the provided email and password.
+     * Uses Firebase Authentication to authenticate the user.
+     */
+    suspend fun login(email: String, password: String): FirebaseUser? {
+        return firebaseAuth.signInWithEmailAndPassword(email, password).await().user
+    }
+
+    /**
+     * Registers a new user with cancellation control and exception handling.
+     */
+    suspend fun register(email: String, password: String): FirebaseUser? {
+        return suspendCancellableCoroutine { cancellableContinuation ->
+            firebaseAuth.createUserWithEmailAndPassword(email, password)
+                .addOnSuccessListener { it: AuthResult? ->
+                    val user: FirebaseUser? = it?.user
+                    cancellableContinuation.resume(user)
+                }.addOnFailureListener { it: Exception ->
+                    cancellableContinuation.resumeWithException(it)
+            }
+        }
+    }
+
+    fun userLogout(){
+        firebaseAuth.signOut()
+    }
+
+    fun isUserLogged(): Boolean {
+        return getCurrentUser() != null
+    }
+
+    private fun getCurrentUser() = firebaseAuth.currentUser
+}
+```
+
+### Login ViewModel
+
+The `LoginScreenViewModel` handles login logic with validation and state management:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/loginscreen/LoginScreenViewModel.kt
+@HiltViewModel
+class LoginScreenViewModel @Inject constructor(private val authService: AuthService) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+
+    fun login(email: String, password: String, onNavigateToHome: () -> Unit) {
+        // Validates empty fields
+        if (email.isBlank() || password.isBlank()) {
+            _errorMessage.value = "Los campos no pueden estar vacios"
+            return
+        }
+        // Validates email format
+        if (!isValidEmail(email)) {
+            _errorMessage.value = "El correo no es válido"
+            return
+        }
+        // Validates password length (minimum 6 characters)
+        if (password.length < 6) {
+            _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+            return
+        }
+
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    authService.login(email = email, password = password)
+                }
+                if (result != null) {
+                    onNavigateToHome()
+                } else {
+                    _errorMessage.value = "Error de autenticación.Por favor, revisa tus credenciales."
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Correo o contraseña no válidos."
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun isValidEmail(email: String): Boolean {
+        return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
+    }
+}
+```
+
+## Validation Rules
+
+<CardGroup cols={2}>
+  <Card title="Email Validation" icon="envelope">
+    - Must be a valid email format
+    - Checked using Android's EMAIL_ADDRESS pattern matcher
+  </Card>
+  
+  <Card title="Password Requirements" icon="key">
+    - Minimum 6 characters
+    - Enforced by Firebase Authentication
+  </Card>
+</CardGroup>
+
+## Registration Flow
+
+### SignUp ViewModel
+
+The `SignUpViewModel` handles new user registration:
+
+```kotlin app/src/main/java/com/ccandeladev/nasaexplorer/ui/signupscreen/SignUpViewModel.kt
+@HiltViewModel
+class SignUpViewModel @Inject constructor(private val authService: AuthService) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+
+    fun register(email: String, password: String, onNavigateToHome: () -> Unit) {
+        if (email.isBlank() || password.isBlank()) {
+            _errorMessage.value = "Los campos no pueden estar vacios"
+            return
+        }
+        if (!isValidEmail(email = email)) {
+            _errorMessage.value = "El correo no es válido"
+            return
+        }
+        if (password.length < 6) {
+            _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+            return
+        }
+
+        viewModelScope.launch {
+            _isLoading.value = true
+
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    authService.register(email = email, password = password)
+                }
+                if (result != null) {
+                    onNavigateToHome()
+                }
+            } catch (e: FirebaseAuthUserCollisionException) {
+                _errorMessage.value = "El correo ya está en uso."
+            } catch (e: Exception) {
+                _errorMessage.value = "Se produjo un error durante el registro"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+<Note>
+  The registration flow catches `FirebaseAuthUserCollisionException` to handle cases where the email is already registered.
+</Note>
+
+## State Management
+
+Both ViewModels use Kotlin Flows for reactive state management:
+
+- **`isLoading`**: Shows/hides loading indicators during authentication
+- **`errorMessage`**: Displays validation or authentication errors to users
+- **Coroutines**: All Firebase operations run asynchronously on IO dispatcher
+
+## Error Handling
+
+<AccordionGroup>
+  <Accordion title="Empty Fields">
+    Displayed when email or password fields are blank before submission.
+  </Accordion>
+  
+  <Accordion title="Invalid Email">
+    Shown when email doesn't match the standard email pattern.
+  </Accordion>
+  
+  <Accordion title="Short Password">
+    Triggered when password is less than 6 characters.
+  </Accordion>
+  
+  <Accordion title="Authentication Failed">
+    Displayed when Firebase rejects the credentials (wrong email/password).
+  </Accordion>
+  
+  <Accordion title="Email Already In Use">
+    Specific to registration when the email is already registered.
+  </Accordion>
+</AccordionGroup>
+
+## Dependency Injection
+
+The authentication system uses Hilt for dependency injection:
+
+```kotlin
+@HiltViewModel
+class LoginScreenViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel()
+```
+
+This enables easy testing and maintains clean separation of concerns.
+
+## Session Management
+
+Firebase Authentication automatically maintains user sessions:
+
+- Sessions persist across app restarts
+- Use `isUserLogged()` to check authentication status
+- Call `userLogout()` to sign out users
+
+<Tip>
+  Check authentication status on app launch to route users to the appropriate screen (login vs. home).
+</Tip>

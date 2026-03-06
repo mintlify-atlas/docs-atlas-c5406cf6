@@ -1,0 +1,904 @@
+---
+title: 'ViewModels'
+description: 'Complete guide to all ViewModels in NASA Explorer app'
+---
+
+NASA Explorer uses the MVVM (Model-View-ViewModel) architecture pattern with Android Jetpack's ViewModel component. All ViewModels are annotated with `@HiltViewModel` for dependency injection and follow reactive state management patterns using Kotlin Flow.
+
+## Overview
+
+The app contains 8 ViewModels that handle state management and business logic:
+
+- **SplashViewModel** - Authentication state and navigation routing
+- **LoginScreenViewModel** - User authentication (login)
+- **SignUpViewModel** - User registration
+- **HomeScreenViewModel** - Home screen operations and logout
+- **DailyImageViewModel** - NASA's Astronomy Picture of the Day
+- **RandomImageViewModel** - Random NASA images collection
+- **RangeImagesViewModel** - Date range image queries
+- **FavoritesViewModel** - Favorite images management with comments
+
+<Note>
+All ViewModels use Kotlin Coroutines with `viewModelScope` for asynchronous operations and StateFlow for reactive state management.
+</Note>
+
+---
+
+## SplashViewModel
+
+Manages the splash screen logic by checking user authentication status and determining the initial navigation destination.
+
+### Dependencies
+
+```kotlin
+@HiltViewModel
+class SplashViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel()
+```
+
+### Navigation Logic
+
+```kotlin
+fun checkDestination(): ResolveSplashDestination {
+    return if (isUserAuthenticated()) {
+        ResolveSplashDestination.Home
+    } else {
+        ResolveSplashDestination.Login
+    }
+}
+
+private fun isUserAuthenticated(): Boolean {
+    return authService.isUserLogged()
+}
+```
+
+### Sealed Class for Navigation
+
+```kotlin
+sealed class ResolveSplashDestination {
+    data object Login: ResolveSplashDestination()
+    data object Home: ResolveSplashDestination()
+}
+```
+
+<Card title="Use Case" icon="route">
+The SplashViewModel determines whether to show the login screen or home screen based on authentication state when the app launches.
+</Card>
+
+---
+
+## LoginScreenViewModel
+
+Handles user login with email/password authentication, including validation and error handling.
+
+### State Management
+
+```kotlin
+@HiltViewModel
+class LoginScreenViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+}
+```
+
+### Login Function
+
+```kotlin
+fun login(email: String, password: String, onNavigateToHome: () -> Unit) {
+    // Validation
+    if (email.isBlank() || password.isBlank()) {
+        _errorMessage.value = "Los campos no pueden estar vacios"
+        return
+    }
+    if (!isValidEmail(email)) {
+        _errorMessage.value = "El correo no es válido"
+        return
+    }
+    if (password.length < 6) {
+        _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+        return
+    }
+
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val result = withContext(Dispatchers.IO) {
+                authService.login(email = email, password = password)
+            }
+            if (result != null) {
+                onNavigateToHome()
+            } else {
+                _errorMessage.value = "Error de autenticación.Por favor, revisa tus credenciales."
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = "Correo o contraseña no válidos."
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+### Email Validation
+
+```kotlin
+private fun isValidEmail(email: String): Boolean {
+    return android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
+}
+
+fun resetErrorMessage() {
+    _errorMessage.value = ""
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Validation Rules">
+    - Email and password cannot be blank
+    - Email must match valid email pattern
+    - Password must be at least 6 characters
+  </Accordion>
+  
+  <Accordion title="Error Messages">
+    - "Los campos no pueden estar vacios" - Empty fields
+    - "El correo no es válido" - Invalid email format
+    - "La contraseña debe tener al menos 6 caracteres" - Short password
+    - "Correo o contraseña no válidos." - Authentication failure
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## SignUpViewModel
+
+Manages user registration with Firebase Authentication, including validation and duplicate email handling.
+
+### State Management
+
+```kotlin
+@HiltViewModel
+class SignUpViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    private var _isLoading = MutableStateFlow<Boolean>(false)
+    val isLoading: StateFlow<Boolean> = _isLoading
+
+    private var _errorMessage = MutableStateFlow<String>("")
+    val errorMessage: StateFlow<String> = _errorMessage
+}
+```
+
+### Registration Function
+
+```kotlin
+fun register(email: String, password: String, onNavigateToHome: () -> Unit) {
+    // Validation
+    if (email.isBlank() || password.isBlank()) {
+        _errorMessage.value = "Los campos no pueden estar vacios"
+        return
+    }
+    if (!isValidEmail(email = email)) {
+        _errorMessage.value = "El correo no es válido"
+        return
+    }
+    if (password.length < 6) {
+        _errorMessage.value = "La contraseña debe tener al menos 6 caracteres"
+        return
+    }
+
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val result = withContext(Dispatchers.IO) {
+                authService.register(email = email, password = password)
+            }
+            if (result != null) {
+                onNavigateToHome()
+            } else {
+                _errorMessage.value = "Error de autenticación.Revisa tus credenciales."
+            }
+        } catch (e: FirebaseAuthUserCollisionException) {
+            _errorMessage.value = "El correo ya está en uso."
+        } catch (e: Exception) {
+            _errorMessage.value = "Se produjo un error durante el registro"
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Warning>
+The SignUpViewModel specifically handles `FirebaseAuthUserCollisionException` to detect when a user tries to register with an email that's already in use.
+</Warning>
+
+---
+
+## HomeScreenViewModel
+
+Simplest ViewModel that handles user logout operations.
+
+### Implementation
+
+```kotlin
+@HiltViewModel
+class HomeScreenViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    fun logOut() {
+        viewModelScope.launch(Dispatchers.IO) {
+            authService.userLogout()
+        }
+    }
+}
+```
+
+<Info>
+The logout operation runs on `Dispatchers.IO` to ensure it doesn't block the main thread.
+</Info>
+
+---
+
+## DailyImageViewModel
+
+Manages NASA's Astronomy Picture of the Day (APOD) with favorites functionality.
+
+### Dependencies
+
+```kotlin
+@HiltViewModel
+class DailyImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel()
+```
+
+### State Management
+
+```kotlin
+private val _dailyImage = MutableStateFlow<NasaModel?>(null)
+val dailyImage: StateFlow<NasaModel?> = _dailyImage
+
+private val _errorMessage = MutableStateFlow<String?>(null)
+val errorMessage: StateFlow<String?> = _errorMessage
+
+private val _isLoading = MutableStateFlow(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+
+private val _isFavorite = MutableStateFlow<Boolean>(false)
+val isFavorite: StateFlow<Boolean> = _isFavorite
+```
+
+### Loading Daily Image
+
+```kotlin
+fun loadDailyImage(date: String? = null) {
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val result = nasaRepository.getImageOfTheDay(date = date)
+            _dailyImage.value = result
+            _errorMessage.value = null
+        } catch (e: Exception) {
+            _errorMessage.value = 
+                "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _dailyImage.value = null
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+### Favorites Management
+
+```kotlin
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = 
+                    firebaseDatabase.reference.child("favorites").child(userId).push()
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                favoriteRef.setValue(favoriteImage).await()
+                _isFavorite.value = true
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = 
+                    favoriteRef.orderByChild("url").equalTo(nasaModel.url).get().await()
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                _isFavorite.value = false
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al buscar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+
+fun checkIsFavorite(url: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = favoriteRef.orderByChild("url").equalTo(url).get().await()
+                _isFavorite.value = snapshot.exists()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Data Model" icon="database">
+    Uses `NasaModel` with title, url, date, and explanation fields
+  </Card>
+  <Card title="Firebase Structure" icon="fire">
+    Stores favorites under `/favorites/{userId}/{pushId}`
+  </Card>
+</CardGroup>
+
+---
+
+## RandomImageViewModel
+
+Loads random NASA images (default 5 images) with favorites management.
+
+### Dependencies
+
+```kotlin
+@HiltViewModel
+class RandomImageViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel()
+```
+
+### State Management
+
+```kotlin
+private val _randomImages = MutableStateFlow<List<NasaModel>>(emptyList())
+val randomImages: StateFlow<List<NasaModel>> = _randomImages
+
+private val _errorMessage = MutableStateFlow<String?>(null)
+val errorMessage: StateFlow<String?> = _errorMessage
+
+private val _isLoading = MutableStateFlow(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+
+private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+val favoriteState: StateFlow<Map<String, Boolean>> = _favoriteStates
+```
+
+### Loading Random Images
+
+```kotlin
+fun loadRandomImages(count: Int = 5) {
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val results = nasaRepository.getRandomImages(count = count)
+            _randomImages.value = results
+            _errorMessage.value = null
+            checkFavorites(results.map { it.url })
+        } catch (e: Exception) {
+            _errorMessage.value = 
+                "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _randomImages.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+### Checking Favorites Status
+
+```kotlin
+private fun checkFavorites(urls: List<String>) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = favoriteRef.get().await()
+                val currentState = _favoriteStates.value.toMutableMap()
+                
+                for (url in urls) {
+                    currentState[url] = snapshot.children.any { it.child("url").value == url }
+                }
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar estado de favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<Info>
+The `_favoriteStates` map uses image URLs as keys and boolean values to track which images are favorited. This allows the UI to display the correct favorite icon state for multiple images simultaneously.
+</Info>
+
+### Favorites Operations
+
+```kotlin
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = 
+                    firebaseDatabase.reference.child("favorites").child(userId).push()
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                favoriteRef.setValue(favoriteImage).await()
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = true
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+
+fun removeFromFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = 
+                    favoriteRef.orderByChild("url").equalTo(nasaModel.url).get().await()
+                
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                
+                val currentState = _favoriteStates.value.toMutableMap()
+                currentState[nasaModel.url] = false
+                _favoriteStates.value = currentState
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al borrar favorito ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+---
+
+## RangeImagesViewModel
+
+Queries NASA images within a specific date range with favorites management.
+
+### Dependencies
+
+```kotlin
+@HiltViewModel
+class RangeImagesViewModel @Inject constructor(
+    private val nasaRepository: NasaRepository,
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel()
+```
+
+### State Management
+
+```kotlin
+private val _dateRangeImages = MutableStateFlow<List<NasaModel>>(emptyList())
+val dateRangeImages: StateFlow<List<NasaModel>> = _dateRangeImages
+
+private val _errorMessage = MutableStateFlow<String?>(null)
+val errorMessage: StateFlow<String?> = _errorMessage
+
+private val _isLoading = MutableStateFlow(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+
+private val _favoriteStates = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+val favoriteStates: StateFlow<Map<String, Boolean>> = _favoriteStates
+```
+
+### Loading Date Range Images
+
+```kotlin
+fun loadDateRangeImages(startDate: String, endDate: String) {
+    viewModelScope.launch {
+        _isLoading.value = true
+        try {
+            val results = 
+                nasaRepository.getImagesInRange(startDate = startDate, endDate = endDate)
+            _dateRangeImages.value = results
+            _errorMessage.value = null
+            checkFavorites(results.map { it.url })
+        } catch (e: Exception) {
+            _errorMessage.value = 
+                "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+            _dateRangeImages.value = emptyList()
+        } finally {
+            _isLoading.value = false
+        }
+    }
+}
+```
+
+<Note>
+The RangeImagesViewModel follows the same favorites management pattern as RandomImageViewModel, tracking favorite states for multiple images in a map.
+</Note>
+
+---
+
+## FavoritesViewModel
+
+Manages the user's favorite images collection with comment functionality.
+
+### Dependencies
+
+```kotlin
+@HiltViewModel
+class FavoritesViewModel @Inject constructor(
+    private val firebaseAuth: FirebaseAuth,
+    private val firebaseDatabase: FirebaseDatabase
+) : ViewModel()
+```
+
+### State Management
+
+```kotlin
+private val _favoriteImages = MutableStateFlow<List<FavoriteNasaModel>>(emptyList())
+val favoriteImages: StateFlow<List<FavoriteNasaModel>> = _favoriteImages
+
+private val _errorMessage = MutableStateFlow<String>("")
+val errorMessage: StateFlow<String> = _errorMessage
+
+private val _isLoading = MutableStateFlow<Boolean>(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+
+private val _comments = MutableStateFlow<Map<String, String>>(emptyMap())
+val comments: StateFlow<Map<String, String>> = _comments
+```
+
+<Info>
+This ViewModel uses `FavoriteNasaModel` which includes the `firebaseImageId` (Firebase-generated unique ID) for comment association.
+</Info>
+
+### Loading Favorites
+
+```kotlin
+fun loadFavoriteImages() {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = favoriteRef.get().await()
+                
+                val favoriteList = snapshot.children.mapNotNull { child ->
+                    val firebaseImageId = child.key ?: return@mapNotNull null
+                    val title = child.child("title").getValue(String::class.java)
+                    val url = child.child("url").getValue(String::class.java)
+                    
+                    if (title != null && url != null) {
+                        FavoriteNasaModel(
+                            firebaseImageId = firebaseImageId,
+                            title = title,
+                            url = url
+                        )
+                    } else null
+                }
+                
+                if (favoriteList.isEmpty()) {
+                    _errorMessage.value = "No tienes imágenes favoritas"
+                }
+                _favoriteImages.value = favoriteList
+                loadComments()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al mostrar la lista de favoritos"
+                _favoriteImages.value = emptyList()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Comments Management
+
+```kotlin
+private fun loadComments() {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val commentsRef = firebaseDatabase.reference.child("comments").child(userId)
+                val snapshot = commentsRef.get().await()
+                
+                val commentsMap = snapshot.children.associate { child ->
+                    val favoriteImageId = child.key ?: ""
+                    val comment = child.getValue(String::class.java) ?: ""
+                    favoriteImageId to comment
+                }
+                _comments.value = commentsMap
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al cargar comentario: ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+
+fun addComment(firebaseImageId: String, comment: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val commentsRef = firebaseDatabase.reference.child("comments").child(userId)
+                commentsRef.child(firebaseImageId).setValue(comment).await()
+                
+                val currentComment = _comments.value.toMutableMap()
+                currentComment[firebaseImageId] = comment
+                _comments.value = currentComment
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar el comentario: ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+### Removing Favorites
+
+```kotlin
+fun removeFromFavorites(favoriteNasaModel: FavoriteNasaModel, onRemoved: () -> Unit) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference.child("favorites").child(userId)
+                val snapshot = favoriteRef.orderByChild("id")
+                    .equalTo(favoriteNasaModel.firebaseImageId).get().await()
+                
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+                
+                // Remove associated comment
+                val commentRef = firebaseDatabase.reference.child("comments").child(userId)
+                commentRef.child(favoriteNasaModel.firebaseImageId).removeValue().await()
+                
+                onRemoved()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al eliminar favoritos ${e.message}"
+            }
+        }
+    } else {
+        _errorMessage.value = "Usuario no autenticado"
+    }
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Firebase Structure: Favorites" icon="star">
+    `/favorites/{userId}/{imageId}` containing id, title, url
+  </Card>
+  <Card title="Firebase Structure: Comments" icon="comment">
+    `/comments/{userId}/{imageId}` containing comment text
+  </Card>
+</CardGroup>
+
+<Warning>
+When removing a favorite, both the favorite entry and its associated comment are deleted from Firebase.
+</Warning>
+
+---
+
+## Data Models
+
+### NasaModel
+
+Primary model for NASA image data used across most ViewModels.
+
+```kotlin
+data class NasaModel(
+    val title: String,
+    val url: String,
+    val date: String,
+    val explanation: String
+)
+```
+
+### FavoriteNasaModel
+
+Extended model used specifically in FavoritesViewModel to include Firebase-generated IDs.
+
+```kotlin
+data class FavoriteNasaModel(
+    val firebaseImageId: String,  // Unique ID generated by Firebase
+    val title: String,
+    val url: String
+)
+```
+
+<Note>
+The `firebaseImageId` field is crucial for linking favorites with their comments in the database.
+</Note>
+
+---
+
+## Common Patterns
+
+### State Flow Pattern
+
+All ViewModels follow this pattern for state management:
+
+```kotlin
+private val _state = MutableStateFlow<Type>(initialValue)
+val state: StateFlow<Type> = _state
+```
+
+This provides:
+- **Immutable public state** for UI observation
+- **Mutable private state** for ViewModel updates
+- **Reactive updates** that automatically propagate to UI
+
+### Error Handling
+
+Consistent error handling across all ViewModels:
+
+```kotlin
+try {
+    // Operation
+    _errorMessage.value = null  // Clear on success
+} catch (e: Exception) {
+    _errorMessage.value = "User-friendly error message"
+} finally {
+    _isLoading.value = false
+}
+```
+
+### Loading States
+
+All ViewModels that perform async operations include:
+
+```kotlin
+private val _isLoading = MutableStateFlow(false)
+val isLoading: StateFlow<Boolean> = _isLoading
+```
+
+### Coroutine Usage
+
+ViewModels use `viewModelScope` for automatic cancellation:
+
+```kotlin
+viewModelScope.launch {
+    // Automatically cancelled when ViewModel is cleared
+}
+```
+
+For blocking operations, use `Dispatchers.IO`:
+
+```kotlin
+viewModelScope.launch(Dispatchers.IO) {
+    // Database or network operations
+}
+```
+
+<AccordionGroup>
+  <Accordion title="Dependency Injection">
+    All ViewModels use Hilt for dependency injection with `@HiltViewModel` annotation and `@Inject` constructor.
+  </Accordion>
+  
+  <Accordion title="Firebase Integration">
+    Five ViewModels integrate with Firebase for authentication and real-time database operations using `FirebaseAuth` and `FirebaseDatabase`.
+  </Accordion>
+  
+  <Accordion title="Repository Pattern">
+    Three ViewModels (DailyImage, RandomImage, RangeImages) use `NasaRepository` to abstract NASA API calls.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Best Practices Demonstrated
+
+<CardGroup cols={2}>
+  <Card title="Separation of Concerns" icon="layer-group">
+    ViewModels contain only business logic, no UI code
+  </Card>
+  
+  <Card title="Reactive State" icon="arrows-rotate">
+    StateFlow provides reactive, lifecycle-aware state updates
+  </Card>
+  
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Comprehensive try-catch blocks with user-friendly messages
+  </Card>
+  
+  <Card title="Loading States" icon="spinner">
+    Loading indicators for all async operations
+  </Card>
+  
+  <Card title="Input Validation" icon="check">
+    Client-side validation before network calls
+  </Card>
+  
+  <Card title="Coroutine Safety" icon="shield">
+    Proper use of viewModelScope and Dispatchers
+  </Card>
+</CardGroup>
+
+---
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Learn about the overall app architecture
+  </Card>
+  
+  <Card title="Data Layer" icon="database" href="/components/repository">
+    Explore repositories and data sources
+  </Card>
+  
+  <Card title="Firebase Integration" icon="fire" href="/configuration/firebase">
+    Firebase setup and usage patterns
+  </Card>
+  
+  <Card title="MVVM Pattern" icon="gears" href="/architecture/mvvm-pattern">
+    Deep dive into MVVM and state management
+  </Card>
+</CardGroup>

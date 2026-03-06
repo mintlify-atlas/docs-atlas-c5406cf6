@@ -1,0 +1,420 @@
+---
+title: 'Home Screen'
+description: 'Main navigation hub with bottom bar, top app bar, and content sections'
+icon: 'house'
+---
+
+## Overview
+
+The Home Screen serves as the main navigation hub for NASA Explorer. It implements a scaffold layout with a custom top app bar, bottom navigation bar, and hosts multiple nested screens including Daily Image, Random Images, Range Images, and Favorites.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Bottom Navigation" icon="compass">
+    Five navigation items for quick access to all major features
+  </Card>
+  <Card title="Top App Bar" icon="bars">
+    Custom header with branding and logout functionality
+  </Card>
+  <Card title="Nested Navigation" icon="route">
+    NavHost integration for smooth transitions between sections
+  </Card>
+  <Card title="Animated Transitions" icon="wand-magic-sparkles">
+    Fade animations for screen transitions (1500ms duration)
+  </Card>
+</CardGroup>
+
+## Architecture
+
+### Main HomeScreen Composable
+
+```kotlin
+@Composable
+fun HomeScreen(
+    homeScreenViewModel: HomeScreenViewModel = hiltViewModel(),
+    onNavigateToLogin: () -> Unit
+) {
+    val navController = rememberNavController()
+
+    BackHandler {
+        navController.popBackStack(Routes.Home, inclusive = false)
+    }
+
+    Scaffold(
+        topBar = {
+            HomeTopBar(
+                navController = navController,
+                homeScreenViewModel = homeScreenViewModel,
+                onNavigateToLogin = onNavigateToLogin
+            )
+        },
+        bottomBar = {
+            HomeBottomBar(navController = navController)
+        }
+    ) { paddingValues ->
+        // NavHost implementation
+    }
+}
+```
+
+## Screen Components
+
+### Home Content
+
+The default home content displays a grid of NASA images:
+
+```kotlin
+@Composable
+fun HomeScreenContent() {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.fondo),
+            contentDescription = "Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        
+        Column(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Two rows with two images each
+        }
+    }
+}
+```
+
+<Note>
+  The home content displays 4 sample NASA images in a 2x2 grid layout with rounded corners and borders.
+</Note>
+
+## Top App Bar
+
+### HomeTopBar Implementation
+
+```kotlin
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeTopBar(
+    navController: NavController,
+    homeScreenViewModel: HomeScreenViewModel,
+    onNavigateToLogin: () -> Unit
+) {
+    TopAppBar(
+        title = { 
+            Text(
+                text = "NASA EXPLORER", 
+                style = MaterialTheme.typography.titleLarge
+            ) 
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+            titleContentColor = MaterialTheme.colorScheme.onPrimary,
+            navigationIconContentColor = MaterialTheme.colorScheme.onPrimary
+        ),
+        modifier = Modifier.shadow(4.dp),
+        navigationIcon = {
+            IconButton(onClick = { navController.navigate(Routes.Home) }) {
+                Icon(
+                    painter = painterResource(id = R.drawable.planet_solid),
+                    contentDescription = "Button Home",
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        },
+        actions = {
+            Text(
+                text = stringResource(R.string.close_session),
+                color = MaterialTheme.colorScheme.onPrimary,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .padding(end = 18.dp)
+                    .clickable {
+                        homeScreenViewModel.logOut()
+                        onNavigateToLogin()
+                    }
+            )
+        }
+    )
+}
+```
+
+### Top Bar Features
+
+<AccordionGroup>
+  <Accordion title="App Title">
+    "NASA EXPLORER" displayed in the title using MaterialTheme.typography.titleLarge
+  </Accordion>
+  
+  <Accordion title="Home Navigation Icon">
+    Planet icon that navigates back to home screen when clicked
+  </Accordion>
+  
+  <Accordion title="Logout Action">
+    Clickable text that triggers logout and navigation to login screen:
+    ```kotlin
+    homeScreenViewModel.logOut()
+    onNavigateToLogin()
+    ```
+  </Accordion>
+  
+  <Accordion title="Styling">
+    - Semi-transparent primary color background (80% alpha)
+    - 4dp shadow elevation
+    - OnPrimary color for text and icons
+  </Accordion>
+</AccordionGroup>
+
+## Bottom Navigation Bar
+
+### HomeBottomBar Implementation
+
+```kotlin
+@Composable
+fun HomeBottomBar(navController: NavController) {
+    var selectedItem by remember { mutableIntStateOf(-1) }
+
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+    ) {
+        // Navigation items
+    }
+}
+```
+
+### Navigation Items
+
+<Tabs>
+  <Tab title="Home">
+    **Icon**: `Icons.Default.Home`
+    
+    **Label**: "Inicio"
+    
+    **Route**: `Routes.Home`
+    
+    ```kotlin
+    NavigationBarItem(
+        selected = selectedItem == 0,
+        onClick = {
+            if (selectedItem != 0) {
+                selectedItem = 0
+                navController.navigate(Routes.Home) {
+                    popUpTo<Routes.Home> { inclusive = false }
+                }
+            }
+        },
+        icon = { Icon(imageVector = Icons.Default.Home, contentDescription = "Home") },
+        label = { Text(text = "Inicio") }
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Daily Image">
+    **Icon**: `Icons.Filled.Today`
+    
+    **Label**: "Diaria"
+    
+    **Route**: `Routes.DailyImage`
+    
+    Navigates to the daily NASA image screen.
+  </Tab>
+  
+  <Tab title="Random Images">
+    **Icon**: `Icons.Filled.Shuffle`
+    
+    **Label**: "Aleatorias"
+    
+    **Route**: `Routes.RandomImage`
+    
+    Displays 5 random NASA images.
+  </Tab>
+  
+  <Tab title="Range Images">
+    **Icon**: `Icons.Default.DateRange`
+    
+    **Label**: "Rango"
+    
+    **Route**: `Routes.RangeImages`
+    
+    Shows images from a selected date range.
+  </Tab>
+  
+  <Tab title="Favorites">
+    **Icon**: `Icons.Default.Favorite`
+    
+    **Label**: "Favoritos"
+    
+    **Route**: `Routes.FavoriteImages`
+    
+    Displays user's saved favorite images.
+  </Tab>
+</Tabs>
+
+### Navigation Bar Styling
+
+```kotlin
+colors = NavigationBarItemDefaults.colors(
+    indicatorColor = MaterialTheme.colorScheme.secondary,
+    selectedIconColor = MaterialTheme.colorScheme.onSecondary,
+    selectedTextColor = MaterialTheme.colorScheme.onSecondary,
+    unselectedIconColor = MaterialTheme.colorScheme.onPrimary,
+    unselectedTextColor = MaterialTheme.colorScheme.onPrimary
+)
+```
+
+## Navigation Setup
+
+### NavHost Configuration
+
+```kotlin
+NavHost(
+    navController = navController,
+    startDestination = Routes.Home,
+    enterTransition = { fadeIn(animationSpec = tween(1500)) },
+    exitTransition = { fadeOut(animationSpec = tween(1500)) },
+    modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)
+        .padding(paddingValues)
+) {
+    composable<Routes.Home> { HomeScreenContent() }
+    composable<Routes.DailyImage> { DailyImageScreen() }
+    composable<Routes.RandomImage> { RandomImageScreen() }
+    composable<Routes.RangeImages> { RangeImagesScreen() }
+    composable<Routes.FavoriteImages> { FavoritesScreen() }
+}
+```
+
+<Info>
+  **Animation Duration**: All transitions use 1500ms fade animations for smooth visual effects.
+</Info>
+
+## ViewModel
+
+### HomeScreenViewModel
+
+Manages logout functionality:
+
+```kotlin
+@HiltViewModel
+class HomeScreenViewModel @Inject constructor(
+    private val authService: AuthService
+) : ViewModel() {
+
+    fun logOut() {
+        viewModelScope.launch(Dispatchers.IO) {
+            authService.userLogout()
+        }
+    }
+}
+```
+
+<Warning>
+  Logout operations run on `Dispatchers.IO` to handle potential network calls asynchronously.
+</Warning>
+
+## Back Handler
+
+Custom back button behavior ensures users return to home screen:
+
+```kotlin
+BackHandler {
+    navController.popBackStack(Routes.Home, inclusive = false)
+}
+```
+
+## Image Grid Layout
+
+The home content displays images in a structured grid:
+
+```kotlin
+// First row
+Row(
+    Modifier
+        .fillMaxWidth()
+        .padding(bottom = 24.dp),
+    horizontalArrangement = Arrangement.SpaceEvenly,
+    verticalAlignment = Alignment.CenterVertically
+) {
+    Image(
+        painter = painterResource(id = R.drawable.imagen1),
+        contentDescription = "Image 1",
+        modifier = Modifier
+            .size(160.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .border(
+                BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(16.dp)
+            ),
+        contentScale = ContentScale.Crop
+    )
+    // Second image
+}
+```
+
+### Image Styling
+
+- **Size**: 160x160dp
+- **Shape**: Rounded corners (16dp radius)
+- **Border**: 1dp with 60% opacity
+- **Content Scale**: Crop
+
+## Routes
+
+The screen uses type-safe navigation routes:
+
+```kotlin
+import com.ccandeladev.nasaexplorer.ui.core.Routes
+
+// Available routes:
+Routes.Home
+Routes.DailyImage
+Routes.RandomImage
+Routes.RangeImages
+Routes.FavoriteImages
+```
+
+## Dependencies
+
+### Navigation
+
+```kotlin
+import androidx.navigation.NavController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+```
+
+### Material 3
+
+```kotlin
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.TopAppBar
+```
+
+### Animation
+
+```kotlin
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+```
+
+## File Location
+
+```
+app/src/main/java/com/ccandeladev/nasaexplorer/ui/homescreen/
+├── HomeScreen.kt
+└── HomeScreenViewModel.kt
+```
+
+<Check>
+  **Best Practice**: The screen uses Scaffold for structured layout and NavHost for nested navigation, following Material Design 3 guidelines.
+</Check>

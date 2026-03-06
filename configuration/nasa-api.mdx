@@ -1,0 +1,300 @@
+---
+title: 'NASA API Configuration'
+description: 'Set up and configure the NASA APOD API key for NASAExplorer'
+icon: 'key'
+---
+
+## Overview
+
+NASAExplorer uses the NASA APOD (Astronomy Picture of the Day) API to fetch astronomical images. This guide will help you configure the API key securely in your Android project.
+
+## Prerequisites
+
+- Android Studio Koala or higher
+- Active internet connection
+- NASA API account
+
+## Obtaining Your API Key
+
+<Steps>
+  <Step title="Visit NASA API Portal">
+    Navigate to [https://api.nasa.gov/](https://api.nasa.gov/) to register for a free API key.
+  </Step>
+  
+  <Step title="Complete Registration">
+    Fill out the registration form with your:
+    - First and Last Name
+    - Email Address
+    - Application Purpose
+    
+    <Note>
+      The DEMO_KEY is available for testing but has limited rate limits (30 requests per hour, 50 requests per day). It's recommended to register for a personal API key.
+    </Note>
+  </Step>
+  
+  <Step title="Receive API Key">
+    Check your email for the API key. NASA will send you a unique key that looks like:
+    ```
+    abc123XYZ456def789ghi012jkl345mno
+    ```
+  </Step>
+</Steps>
+
+## Configuration Setup
+
+### Adding the API Key to local.properties
+
+The NASA API key is stored in `local.properties` to keep it secure and separate from version control.
+
+<Steps>
+  <Step title="Locate local.properties">
+    In your project root directory, find or create the `local.properties` file:
+    ```
+    NASAExplorer/
+    ├── app/
+    ├── gradle/
+    ├── local.properties  ← This file
+    └── build.gradle.kts
+    ```
+  </Step>
+  
+  <Step title="Add the API Key">
+    Open `local.properties` and add your NASA API key:
+    
+    ```properties local.properties
+    sdk.dir=/path/to/Android/sdk
+    nasaApiKey=YOUR_NASA_API_KEY_HERE
+    ```
+    
+    Replace `YOUR_NASA_API_KEY_HERE` with the actual key from NASA.
+  </Step>
+  
+  <Step title="Sync Project">
+    Sync your Gradle project in Android Studio. The build system will automatically read the API key during compilation.
+  </Step>
+</Steps>
+
+<Warning>
+  Never commit `local.properties` to version control. The `.gitignore` file already excludes it to prevent accidental exposure of your API key.
+</Warning>
+
+## How It Works
+
+### Build Configuration
+
+The `app/build.gradle.kts` file reads the API key from `local.properties` and injects it as a BuildConfig field:
+
+```kotlin app/build.gradle.kts
+// Read local.properties
+val localProperties = Properties().apply {
+    load(project.rootProject.file("local.properties").inputStream())
+}
+
+// Extract the API key
+val nasaApiKey: String = localProperties.getProperty("nasaApiKey") ?: ""
+
+android {
+    defaultConfig {
+        // Inject as BuildConfig field
+        buildConfigField("String", "NASA_API_KEY", "\"$nasaApiKey\"")
+    }
+    
+    // Enable BuildConfig
+    buildFeatures {
+        buildConfig = true
+    }
+}
+```
+
+### Repository Usage
+
+The `NasaRepository` accesses the API key through `BuildConfig`:
+
+```kotlin NasaRepository.kt
+package com.ccandeladev.nasaexplorer.data.api
+
+import com.ccandeladev.nasaexplorer.BuildConfig
+import javax.inject.Inject
+
+class NasaRepository @Inject constructor(
+    private val nasaApiService: NasaApiService
+) {
+    companion object {
+        private const val API_KEY = BuildConfig.NASA_API_KEY
+    }
+
+    suspend fun getImageOfTheDay(date: String? = null): NasaModel {
+        val response = nasaApiService.getImageOfTheDay(
+            apiKey = API_KEY,
+            date = date
+        )
+        return response.toNasaModel()
+    }
+
+    suspend fun getRandomImages(count: Int): List<NasaModel> {
+        val response = nasaApiService.getRandomImages(
+            apiKey = API_KEY,
+            count = count
+        )
+        return response.map { it.toNasaModel() }
+    }
+}
+```
+
+## API Endpoints Used
+
+NASAExplorer uses the following NASA APOD endpoints:
+
+### Base URL
+```
+https://api.nasa.gov/planetary/apod
+```
+
+### 1. Get Image of the Day
+
+```kotlin
+@GET("planetary/apod")
+suspend fun getImageOfTheDay(
+    @Query("api_key") apiKey: String,
+    @Query("date") date: String? = null
+): NasaResponse
+```
+
+**Parameters:**
+- `api_key` (required): Your NASA API key
+- `date` (optional): Date in YYYY-MM-DD format
+
+**Example Request:**
+```
+https://api.nasa.gov/planetary/apod?api_key=YOUR_KEY&date=2024-03-15
+```
+
+### 2. Get Images in Date Range
+
+```kotlin
+@GET("planetary/apod")
+suspend fun getImagesInRange(
+    @Query("api_key") apiKey: String,
+    @Query("start_date") startDate: String,
+    @Query("end_date") endDate: String? = null
+): List<NasaResponse>
+```
+
+**Parameters:**
+- `api_key` (required): Your NASA API key
+- `start_date` (required): Start date in YYYY-MM-DD format
+- `end_date` (optional): End date in YYYY-MM-DD format
+
+### 3. Get Random Images
+
+```kotlin
+@GET("planetary/apod")
+suspend fun getRandomImages(
+    @Query("api_key") apiKey: String,
+    @Query("count") count: Int
+): List<NasaResponse>
+```
+
+**Parameters:**
+- `api_key` (required): Your NASA API key
+- `count` (required): Number of random images (max: 100)
+
+## Network Configuration
+
+The API is configured using Retrofit with the following setup:
+
+```kotlin ApiNetworkModule.kt
+@Module
+@InstallIn(SingletonComponent::class)
+object ApiNetworkModule {
+    private const val BASE_URL = "https://api.nasa.gov/"
+
+    @Singleton
+    @Provides
+    fun provideRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .client(okHttpClient)
+            .baseUrl(BASE_URL)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Singleton
+    @Provides
+    fun provideHttpClient(): OkHttpClient {
+        return OkHttpClient.Builder().build()
+    }
+}
+```
+
+## Rate Limits
+
+<Note>
+  NASA API rate limits:
+  - **Free API Key**: 1,000 requests per hour
+  - **DEMO_KEY**: 30 requests per hour, 50 requests per day
+</Note>
+
+## Troubleshooting
+
+### Missing API Key Error
+
+If you see a build error like `API_KEY not found`:
+
+1. Verify `local.properties` exists in the project root
+2. Confirm the property is named exactly `nasaApiKey`
+3. Ensure no extra spaces around the equals sign
+4. Sync Gradle files
+
+### Invalid API Key Response
+
+If API requests fail with 403 Forbidden:
+
+1. Double-check your API key is correct
+2. Verify the key is active in your NASA account
+3. Check if you've exceeded rate limits
+4. Try using DEMO_KEY temporarily for testing
+
+### Connection Issues
+
+```kotlin
+_errorMessage.value = "Sin conexión a internet. Conéctate a una red Wi-Fi o habilita datos móviles para ver las imágenes"
+```
+
+Ensure your device/emulator has:
+- Active internet connection
+- Network permissions in AndroidManifest.xml
+- Proper DNS resolution
+
+## Security Best Practices
+
+<Warning>
+  **Critical Security Notes:**
+  - Never hardcode API keys in source code
+  - Keep `local.properties` out of version control
+  - Don't share your API key publicly
+  - Rotate keys if accidentally exposed
+</Warning>
+
+### What's Protected
+
+The `.gitignore` file includes:
+
+```gitignore
+/local.properties
+local.properties
+```
+
+This ensures your API key never reaches the repository.
+
+## Next Steps
+
+Once your API key is configured:
+
+1. [Set up Firebase](/configuration/firebase) for user authentication
+2. [Configure security rules](/configuration/security) for production
+3. Build and run the app on your device
+
+<Note>
+  For production releases, consider implementing API key obfuscation techniques or using a backend proxy to protect your credentials.
+</Note>

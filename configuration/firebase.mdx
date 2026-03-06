@@ -1,0 +1,513 @@
+---
+title: 'Firebase Configuration'
+description: 'Configure Firebase Authentication and Realtime Database for NASAExplorer'
+icon: 'fire'
+---
+
+## Overview
+
+NASAExplorer uses Firebase for user authentication and cloud storage of favorite images with personal notes. This guide covers the complete Firebase setup process.
+
+## Firebase Services Used
+
+- **Firebase Authentication**: Email/password authentication
+- **Firebase Realtime Database**: Store user favorites and comments
+- **Firebase SDK**: Version 33.5.1 (using BoM)
+
+## Prerequisites
+
+- Google account
+- Android Studio Koala or higher
+- Active internet connection
+- Completed [NASA API setup](/configuration/nasa-api)
+
+## Firebase Console Setup
+
+<Steps>
+  <Step title="Create Firebase Project">
+    1. Go to [Firebase Console](https://console.firebase.google.com/)
+    2. Click **Add project** or **Create a project**
+    3. Enter project name (e.g., "NASAExplorer")
+    4. Choose whether to enable Google Analytics (optional)
+    5. Click **Create project** and wait for setup to complete
+  </Step>
+  
+  <Step title="Add Android App">
+    In your Firebase project:
+    
+    1. Click the Android icon to add an Android app
+    2. Enter your package name:
+    ```
+    com.ccandeladev.nasaexplorer
+    ```
+    3. (Optional) Add app nickname: "NASAExplorer"
+    4. (Optional) Add SHA-1 certificate (not required for email auth)
+    5. Click **Register app**
+  </Step>
+  
+  <Step title="Download google-services.json">
+    1. Download the `google-services.json` configuration file
+    2. Move it to your project's `app/` directory:
+    ```
+    NASAExplorer/
+    ├── app/
+    │   ├── google-services.json  ← Place here
+    │   ├── build.gradle.kts
+    │   └── src/
+    └── build.gradle.kts
+    ```
+    
+    <Warning>
+      The `google-services.json` file contains your Firebase project configuration. Never commit it to public repositories.
+    </Warning>
+  </Step>
+  
+  <Step title="Enable Firebase Authentication">
+    1. In Firebase Console, navigate to **Authentication**
+    2. Click **Get started**
+    3. Go to **Sign-in method** tab
+    4. Enable **Email/Password** provider
+    5. Save changes
+  </Step>
+  
+  <Step title="Set Up Realtime Database">
+    1. Navigate to **Realtime Database** in Firebase Console
+    2. Click **Create Database**
+    3. Choose a location (e.g., `europe-west1`)
+    4. Start in **Test mode** for development
+    
+    <Note>
+      Test mode allows all reads/writes. You'll configure security rules later.
+    </Note>
+  </Step>
+</Steps>
+
+## Project Configuration
+
+### Gradle Setup
+
+The project is already configured with Firebase dependencies:
+
+```kotlin build.gradle.kts (Project level)
+plugins {
+    // ... other plugins
+    id("com.google.gms.google-services") version "4.4.0" apply false
+}
+```
+
+```kotlin app/build.gradle.kts
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    kotlin("kapt")
+    alias(libs.plugins.hilt)
+    
+    // Firebase plugin
+    id("com.google.gms.google-services")
+}
+
+dependencies {
+    // Firebase BoM (Bill of Materials)
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    
+    // Firebase products
+    implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-database-ktx")
+}
+```
+
+<Note>
+  Using Firebase BoM ensures all Firebase dependencies use compatible versions. No need to specify individual version numbers.
+</Note>
+
+## Dependency Injection with Hilt
+
+Firebase services are provided through Hilt modules:
+
+### Firebase Module
+
+```kotlin FirebaseModule.kt
+package com.ccandeladev.nasaexplorer.data.di
+
+import com.google.firebase.database.DatabaseReference
+import com.google.firebase.database.FirebaseDatabase
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object FirebaseModule {
+
+    @Provides
+    @Singleton
+    fun provideFirebaseDatabase(): FirebaseDatabase {
+        return FirebaseDatabase.getInstance()
+    }
+}
+```
+
+### Authentication Module
+
+```kotlin AuthNetworkModule.kt
+@Module
+@InstallIn(SingletonComponent::class)
+object AuthNetworkModule {
+
+    @Provides
+    @Singleton
+    fun provideFirebaseAuth(): FirebaseAuth {
+        return FirebaseAuth.getInstance()
+    }
+}
+```
+
+## Authentication Service
+
+The `AuthService` handles user authentication operations:
+
+```kotlin AuthService.kt
+package com.ccandeladev.nasaexplorer.data.auth
+
+import com.google.firebase.auth.AuthResult
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.tasks.await
+import javax.inject.Inject
+
+class AuthService @Inject constructor(
+    private val firebaseAuth: FirebaseAuth
+) {
+
+    /**
+     * User login with email and password
+     */
+    suspend fun login(email: String, password: String): FirebaseUser? {
+        return firebaseAuth
+            .signInWithEmailAndPassword(email, password)
+            .await()
+            .user
+    }
+
+    /**
+     * User registration with email and password
+     */
+    suspend fun register(email: String, password: String): FirebaseUser? {
+        return firebaseAuth
+            .createUserWithEmailAndPassword(email, password)
+            .await()
+            .user
+    }
+
+    /**
+     * Sign out current user
+     */
+    fun userLogout() {
+        firebaseAuth.signOut()
+    }
+
+    /**
+     * Check if user is logged in
+     */
+    fun isUserLogged(): Boolean {
+        return getCurrentUser() != null
+    }
+
+    private fun getCurrentUser() = firebaseAuth.currentUser
+}
+```
+
+## Database Structure
+
+The Realtime Database uses the following structure:
+
+```json
+{
+  "favorites": {
+    "<user_id>": {
+      "<image_id>": {
+        "id": "<firebase_generated_id>",
+        "title": "Image Title",
+        "url": "https://..."
+      }
+    }
+  },
+  "comments": {
+    "<user_id>": {
+      "<image_id>": "User's personal comment"
+    }
+  }
+}
+```
+
+### Example Data
+
+```json
+{
+  "favorites": {
+    "abc123userId": {
+      "-NxR5tPqK_abc123": {
+        "id": "-NxR5tPqK_abc123",
+        "title": "Eagle Nebula",
+        "url": "https://apod.nasa.gov/apod/image/..."
+      }
+    }
+  },
+  "comments": {
+    "abc123userId": {
+      "-NxR5tPqK_abc123": "My favorite nebula! The pillars of creation are stunning."
+    }
+  }
+}
+```
+
+## Database Operations
+
+### Saving Favorites
+
+```kotlin DailyImageViewModel.kt
+fun saveToFavorites(nasaModel: NasaModel) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                // Create new reference with auto-generated ID
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                    .push()
+                
+                // Prepare data
+                val favoriteImage = mapOf(
+                    "id" to (favoriteRef.key ?: ""),
+                    "title" to nasaModel.title,
+                    "url" to nasaModel.url
+                )
+                
+                // Save to Firebase
+                favoriteRef.setValue(favoriteImage).await()
+                _isFavorite.value = true
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar favorito ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Loading Favorites
+
+```kotlin FavoritesViewModel.kt
+fun loadFavoriteImages() {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                val snapshot = favoriteRef.get().await()
+
+                val favoriteList = snapshot.children.mapNotNull { child ->
+                    val firebaseImageId = child.key ?: return@mapNotNull null
+                    val title = child.child("title").getValue(String::class.java)
+                    val url = child.child("url").getValue(String::class.java)
+
+                    if (title != null && url != null) {
+                        FavoriteNasaModel(
+                            firebaseImageId = firebaseImageId,
+                            title = title,
+                            url = url
+                        )
+                    } else null
+                }
+                
+                _favoriteImages.value = favoriteList
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al mostrar la lista de favoritos"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+}
+```
+
+### Adding Comments
+
+```kotlin FavoritesViewModel.kt
+fun addComment(firebaseImageId: String, comment: String) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val commentsRef = firebaseDatabase.reference
+                    .child("comments")
+                    .child(userId)
+                
+                commentsRef.child(firebaseImageId).setValue(comment).await()
+
+                // Update local state
+                val currentComment = _comments.value.toMutableMap()
+                currentComment[firebaseImageId] = comment
+                _comments.value = currentComment
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al guardar el comentario: ${e.message}"
+            }
+        }
+    }
+}
+```
+
+### Removing Favorites
+
+```kotlin FavoritesViewModel.kt
+fun removeFromFavorites(
+    favoriteNasaModel: FavoriteNasaModel,
+    onRemoved: () -> Unit
+) {
+    val userId = firebaseAuth.currentUser?.uid
+    if (userId != null) {
+        viewModelScope.launch {
+            try {
+                val favoriteRef = firebaseDatabase.reference
+                    .child("favorites")
+                    .child(userId)
+                
+                // Find and remove the favorite
+                val snapshot = favoriteRef
+                    .orderByChild("id")
+                    .equalTo(favoriteNasaModel.firebaseImageId)
+                    .get()
+                    .await()
+
+                for (child in snapshot.children) {
+                    child.ref.removeValue().await()
+                }
+
+                // Remove associated comment
+                val commentRef = firebaseDatabase.reference
+                    .child("comments")
+                    .child(userId)
+                commentRef.child(favoriteNasaModel.firebaseImageId)
+                    .removeValue()
+                    .await()
+
+                onRemoved()
+            } catch (e: Exception) {
+                _errorMessage.value = "Error al eliminar favoritos ${e.message}"
+            }
+        }
+    }
+}
+```
+
+## google-services.json Structure
+
+Your `google-services.json` file contains:
+
+```json google-services.json (example)
+{
+  "project_info": {
+    "project_number": "712153274569",
+    "firebase_url": "https://nasaexplorer-f002d-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "nasaexplorer-f002d",
+    "storage_bucket": "nasaexplorer-f002d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:712153274569:android:3f05db2b139e424b669518",
+        "android_client_info": {
+          "package_name": "com.ccandeladev.nasaexplorer"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZHCsycE5UynnESeXZ9gDnO_3TsM1xCY0"
+        }
+      ]
+    }
+  ]
+}
+```
+
+<Warning>
+  This file contains sensitive configuration. The project `.gitignore` excludes it from version control.
+</Warning>
+
+## Troubleshooting
+
+### google-services.json Not Found
+
+If you see a build error about missing configuration:
+
+1. Verify `google-services.json` is in the `app/` directory
+2. Ensure the file name is exact (lowercase, no spaces)
+3. Sync Gradle files in Android Studio
+4. Clean and rebuild the project
+
+### Package Name Mismatch
+
+Error: `No matching client found for package name`
+
+Solution:
+- Verify the package name in `google-services.json` matches your `applicationId` in `build.gradle.kts`:
+  ```kotlin
+  applicationId = "com.ccandeladev.nasaexplorer"
+  ```
+
+### Authentication Failures
+
+If login/registration fails:
+
+1. Check Firebase Console that Email/Password auth is enabled
+2. Verify internet connectivity
+3. Check Firebase Authentication logs in console
+4. Ensure proper error handling in your code
+
+### Database Permission Denied
+
+If you get permission errors:
+
+1. Check your database rules (see [Security Configuration](/configuration/security))
+2. Verify user is authenticated before database operations
+3. Ensure proper userId is being used
+
+## Testing Firebase Integration
+
+<Steps>
+  <Step title="Run the App">
+    Build and run NASAExplorer on an emulator or physical device.
+  </Step>
+  
+  <Step title="Test Registration">
+    1. Navigate to the registration screen
+    2. Create a new account with email/password
+    3. Check Firebase Console > Authentication to see the new user
+  </Step>
+  
+  <Step title="Test Database Operations">
+    1. Log in with your test account
+    2. Add an image to favorites
+    3. Check Firebase Console > Realtime Database to see the data
+    4. Add a comment to the favorite
+    5. Verify both favorites and comments appear in the database
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that Firebase is configured:
+
+1. [Set up security rules](/configuration/security) for production
+2. Learn about [MVVM architecture](/architecture/overview)
+3. Review [Testing guide](/development/testing)
+
+<Note>
+  Remember to configure proper security rules before deploying to production. See the [Security Configuration](/configuration/security) guide for details.
+</Note>
